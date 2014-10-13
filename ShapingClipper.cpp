@@ -50,7 +50,7 @@ void ShapingClipper::feed(const double* inSamples, double* outSamples){
 
   for(int i=0; i<4; i++){
 
-    clipToWindow(windowedFrame, clippingDelta);  
+    clipToWindow(windowedFrame, clippingDelta, 1+0.1*i);
     Aquila::SpectrumType clipSpectrum = this->fft->fft(clippingDelta);
    
     limitClipSpectrum(clipSpectrum, maskCurve);
@@ -71,10 +71,10 @@ void ShapingClipper::feed(const double* inSamples, double* outSamples){
 
 void ShapingClipper::generateMarginCurve(){
   // the normal curve trashes frequencies above 16khz (because I can't hear it...but some people might)
-  int points[][2] = {{0,0}, {500,40}, {2000,40}, {4000,35}, {6000,30}, {12000,30}, {16000,25}, {17000,-1000}}; //normal
+  //int points[][2] = {{0,0}, {500,40}, {2000,40}, {4000,35}, {6000,30}, {12000,30}, {16000,25}, {17000,-1000}}; //normal, need tweaking
   // the FM curve puts more distortion in the high frequencies to take advantage of pre/de-emphasis.
   // it also removes all distortion above 16khz as required by the FM stereo standard.
-  //int points[][2] = {{0,-100}, {100,-50}, {200,40}, {3000,40}, {7000,20}, {12000,-30}, {16000,-100}, {17000,1000}}; //FM
+  int points[][2] = {{0,-100}, {100,-50}, {200,0}, {1000,20}, {5000,20}, {10000,0}, {16000,-5}, {17000,1000}}; //FM
   int numPoints = 8;
   this->marginCurve[0] = points[0][1];
   
@@ -101,15 +101,15 @@ void ShapingClipper::applyWindow(const double* inFrame, double* outFrame, const 
   }
 }
   
-void ShapingClipper::clipToWindow(const double* windowedFrame, double* clippingDelta){
+void ShapingClipper::clipToWindow(const double* windowedFrame, double* clippingDelta, double deltaBoost){
   const double* window = this->window->toArray();
   for(int i = 0; i < this->size; i++){
     double limit = this->clipLevel * window[i];
     double effectiveValue = windowedFrame[i] + clippingDelta[i];
     if(effectiveValue > limit)
-      clippingDelta[i] += limit - effectiveValue;
+      clippingDelta[i] += (limit - effectiveValue)*deltaBoost;
     else if(effectiveValue < -limit)
-      clippingDelta[i] += -limit - effectiveValue;
+      clippingDelta[i] += (-limit - effectiveValue)*deltaBoost;
   }
 }
 
@@ -119,18 +119,24 @@ void ShapingClipper::calculateMaskCurve(const Aquila::SpectrumType &spectrum, do
 
   for(int j = 0; j < this->maskSpill; j++)
     maskCurve[0+j] += abs(spectrum[0]) / (j*128/this->size + 1);
+
   for(int i = 1; i < this->size / 2; i++){
-    // upward spill
-    for(int j = 0; j < this->maskSpill; j++){
-      int idx = i+j;
-      idx = (idx > this->size / 2 ? this->size / 2 : idx);
-      maskCurve[idx] += (abs(spectrum[i]) + abs(spectrum[this->size - i])) / (j*128/this->size + 1);
-    }
-    // downward spill
-    for(int j = 1; j < this->maskSpill / 2; j++){
-      int idx = i-j;
-      idx = (idx < 0 ? 0 : idx);
-      maskCurve[idx] += (abs(spectrum[i]) + abs(spectrum[this->size - i])) / (j*256/this->size + 1);
+    maskCurve[i] += (abs(spectrum[i]) + abs(spectrum[this->size - i]));
+
+    // masking spill limited to high frequencies.
+    if(i > 6000 * this->size / sampleFreq){
+      // upward spill
+      for(int j = 1; j < this->maskSpill; j++){
+	int idx = i+j;
+	idx = (idx > this->size / 2 ? this->size / 2 : idx);
+	maskCurve[idx] += (abs(spectrum[i]) + abs(spectrum[this->size - i])) / (j*256/this->size + 1);
+      }
+      // downward spill
+      for(int j = 1; j < this->maskSpill / 2; j++){
+	int idx = i-j;
+	idx = (idx < 0 ? 0 : idx);
+	maskCurve[idx] += (abs(spectrum[i]) + abs(spectrum[this->size - i])) / (j*512/this->size + 1);
+      }
     }
   }
   maskCurve[this->size / 2] += abs(spectrum[this->size / 2]);
