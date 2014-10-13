@@ -1,0 +1,8 @@
+Follow the instructions at
+http://aquila-dsp.org/download/
+to install Aquila.
+
+Then follow the answer here
+http://stackoverflow.com/questions/22033417/undefined-reference-with-extern-c
+"Up to git version 6f5d6b, Aquila's CMake config will generate static library by default. You should copy /path-to-your-build-tree/lib/libOoura_fft.a to /path-to-your-install-dir/lib/, and link it to your test program."
+to fix the Ooura_fft linking problem.
