@@ -85,4 +85,10 @@ class ShapingClipper
    *  distortion.
    */
   void limitClipSpectrum(Aquila::SpectrumType &clipSpectrum, const double* maskCurve);
+
+  /**
+   *  Scale the frame to the clipping threshold.
+   *  Not sure if this will be useful.
+   */
+  void limitPeak(double* windowedFrame);
 };

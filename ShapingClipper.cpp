@@ -50,7 +50,7 @@ void ShapingClipper::feed(const double* inSamples, double* outSamples){
 
   for(int i=0; i<4; i++){
 
-    clipToWindow(windowedFrame, clippingDelta, 1+0.1*i);
+    clipToWindow(windowedFrame, clippingDelta, 1+0.2*i);
     Aquila::SpectrumType clipSpectrum = this->fft->fft(clippingDelta);
    
     limitClipSpectrum(clipSpectrum, maskCurve);
@@ -62,6 +62,8 @@ void ShapingClipper::feed(const double* inSamples, double* outSamples){
   for(int i=0; i<this->size; i++)
     windowedFrame[i] += clippingDelta[i];
 
+  //limitPeak(windowedFrame);
+
   applyWindow(windowedFrame, this->outFrame.data(), true); //overlap & add
   
   for(int i = 0; i < this->overlap; i++)
@@ -71,10 +73,12 @@ void ShapingClipper::feed(const double* inSamples, double* outSamples){
 
 void ShapingClipper::generateMarginCurve(){
   // the normal curve trashes frequencies above 16khz (because I can't hear it...but some people might)
-  //int points[][2] = {{0,0}, {500,40}, {2000,40}, {4000,35}, {6000,30}, {12000,30}, {16000,25}, {17000,-1000}}; //normal, need tweaking
+  int points[][2] = {{0,-10}, {80,0}, {120,20}, {1000,15}, {6000,15}, {12000,10}, {16000,5}, {17000,-1000}}; //normal
+
   // the FM curve puts more distortion in the high frequencies to take advantage of pre/de-emphasis.
   // it also removes all distortion above 16khz as required by the FM stereo standard.
-  int points[][2] = {{0,-100}, {100,-50}, {200,0}, {1000,20}, {5000,20}, {10000,0}, {16000,-5}, {17000,1000}}; //FM
+  //int points[][2] = {{0,-100}, {100,-50}, {200,0}, {1000,20}, {5000,20}, {10000,10}, {16000,-5}, {17000,1000}}; //FM
+
   int numPoints = 8;
   this->marginCurve[0] = points[0][1];
   
@@ -144,17 +148,35 @@ void ShapingClipper::calculateMaskCurve(const Aquila::SpectrumType &spectrum, do
 
 void ShapingClipper::limitClipSpectrum(Aquila::SpectrumType &clipSpectrum, const double* maskCurve){
   double* marginCurve = this->marginCurve.data(); // margin curve is already in dB
-  double relativeDistortionLevel = Aquila::dB(abs(clipSpectrum[0])) - (Aquila::dB(maskCurve[0]) - marginCurve[0]);
+  double relativeDistortionLevel = Aquila::dB(abs(clipSpectrum[0]) / maskCurve[0]) + marginCurve[0];
   if(relativeDistortionLevel > 0)
     clipSpectrum[0] *= pow(10, -relativeDistortionLevel / 20);
   for(int i = 1; i < this->size / 2; i++){
-    relativeDistortionLevel = Aquila::dB(abs(clipSpectrum[i]) + abs(clipSpectrum[this->size - i])) - (Aquila::dB(maskCurve[i]) - marginCurve[i]);
+    relativeDistortionLevel = Aquila::dB((abs(clipSpectrum[i]) + abs(clipSpectrum[this->size - i])) / maskCurve[i]) + marginCurve[i];
     if(relativeDistortionLevel > 0){
       clipSpectrum[i] *= pow(10, -relativeDistortionLevel / 20);
       clipSpectrum[this->size - i] *= pow(10, -relativeDistortionLevel / 20);
     }
   }
-  relativeDistortionLevel = Aquila::dB(abs(clipSpectrum[this->size / 2])) - (Aquila::dB(maskCurve[this->size / 2]) - marginCurve[this->size / 2]);
+  relativeDistortionLevel = Aquila::dB(abs(clipSpectrum[this->size / 2]) / maskCurve[this->size / 2]) + marginCurve[this->size / 2];
   if(relativeDistortionLevel > 0)
     clipSpectrum[this->size / 2] *= pow(10, -relativeDistortionLevel / 20);
+}
+
+void ShapingClipper::limitPeak(double* windowedFrame){
+  const double* window = this->window->toArray();
+  double multiplier = 1;
+  for(int i = this->size / 4; i < this->size * 3 / 4; i++){
+    double absVal = abs(windowedFrame[i]) / this->clipLevel;
+    if(absVal > window[i]){
+      double newMult = window[i]/absVal;
+      if(newMult < multiplier){
+	multiplier = newMult;
+      }
+    }
+  }
+
+  if(multiplier < 0.9999)
+    for(int i = 0; i < this->size; i++)
+      windowedFrame[i] *= multiplier;
 }
