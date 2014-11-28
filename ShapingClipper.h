@@ -69,7 +69,7 @@ class ShapingClipper
    *  into account.
    *  Should only be used with windowed input
    */
-  void clipToWindow(const double* windowedFrame, double* clippingDelta, double deltaBoost);
+  void clipToWindow(const double* windowedFrame, double* clippingDelta, double deltaBoost=1.0);
 
   /**
    *  Calculates the original signal level considering psychoacoustic masking.

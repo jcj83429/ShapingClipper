@@ -21,8 +21,8 @@ int main(int argc, char* argv[])
     Aquila::SignalSource wavL = Aquila::WaveFile(argv[1], Aquila::StereoChannel::LEFT);
     Aquila::SignalSource wavR = Aquila::WaveFile(argv[1], Aquila::StereoChannel::RIGHT);
 
-    ShapingClipper clipperL(44100, 256, 32768*20/100);
-    ShapingClipper clipperR(44100, 256, 32768*20/100);
+    ShapingClipper clipperL(44100, 256, 32768*50/100);
+    ShapingClipper clipperR(44100, 256, 32768*50/100);
     const int feedSize = clipperL.getFeedSize();
 
     double outBufL[feedSize], outBufR[feedSize];
@@ -31,7 +31,7 @@ int main(int argc, char* argv[])
     Aquila::FramesCollection frmsR(wavR, feedSize);
 
     std::ofstream outfile;
-    outfile.open(argv[2], std::ios::out | std::ios::app | std::ios::binary);
+    outfile.open(argv[2], std::ios::out | std::ios::binary);
 
     int frameN = 0;
     while(frameN < frmsL.count()){
@@ -51,19 +51,6 @@ int main(int argc, char* argv[])
       }
 
       frameN++;
-    }
-    
-    return 0;
-
-    double dummy[feedSize];
-    for(int i=0; i<feedSize; i++)
-      dummy[i] = 0.0;
-
-    for(int i=0; i<3; i++){
-      clipperL.feed(dummy, outBufL);
-      for(int j=0; j<3; j++)
-	out16[i] = outBufL[i];
-      outfile.write((const char*)out16, feedSize*2);
     }
     
     return 0;
