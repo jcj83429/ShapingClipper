@@ -61,8 +61,11 @@ void ShapingClipper::feed(const double* inSamples, double* outSamples){
 
     //be less strict in the next iteration
     for(int i = 0; i < this->size / 2 + 1; i++)
-      maskCurve[i] *= 1.2;
+      this->marginCurve[i] -= 2;
   }
+
+  for(int i = 0; i < this->size / 2 + 1; i++)
+    this->marginCurve[i] += 8;
 
   for(int i=0; i<this->size; i++)
     windowedFrame[i] += clippingDelta[i];
@@ -78,7 +81,7 @@ void ShapingClipper::feed(const double* inSamples, double* outSamples){
 
 void ShapingClipper::generateMarginCurve(){
   // the normal curve trashes frequencies above 16khz (because I can't hear it...but some people might)
-  int points[][2] = {{0,-10}, {80,0}, {200,20}, {1000,15}, {6000,15}, {12000,10}, {16000,5}, {17000,-1000}}; //normal
+  int points[][2] = {{0,-10}, {80,0}, {200,20}, {1000,15}, {6000,20}, {10000,25}, {16000,20}, {17000,-1000}}; //normal
 
   // the FM curve puts more distortion in the high frequencies to take advantage of pre/de-emphasis.
   // it also removes all distortion above 16khz as required by the FM stereo standard.
@@ -123,30 +126,40 @@ void ShapingClipper::clipToWindow(const double* windowedFrame, double* clippingD
 }
 
 void ShapingClipper::calculateMaskCurve(const Aquila::SpectrumType &spectrum, double* maskCurve){
+  const int maskSpillBaseVal = 1;
+  const int maskSpillBaseFreq = 2000; //maskSpill = 1 at 2000 Hz
+  double amp;
+  int nextMaskSpillBand = maskSpillBaseFreq * this->size / this->sampleFreq;
+  int maskSpill = maskSpillBaseVal;
+
   for(int j = 0; j < this->size / 2 + 1; j++)
     maskCurve[j] = 0;
 
-  for(int j = 0; j < this->maskSpill; j++)
+  for(int j = 0; j < this->size / 64; j++)
     maskCurve[0+j] += abs(spectrum[0]) / (j*128/this->size + 1);
 
   for(int i = 1; i < this->size / 2; i++){
-    maskCurve[i] += (abs(spectrum[i]) + abs(spectrum[this->size - i]));
+    amp = abs(spectrum[i]) + abs(spectrum[this->size - i]);
+    //amp = amp / maskSpill;
+    maskCurve[i] += amp;
 
-    // masking spill limited to high frequencies.
-    if(i > 6000 * this->size / sampleFreq){
       // upward spill
-      for(int j = 1; j < this->maskSpill; j++){
+      for(int j = 1; j < maskSpill; j++){
 	int idx = i+j;
-	idx = (idx > this->size / 2 ? this->size / 2 : idx);
-	maskCurve[idx] += (abs(spectrum[i]) + abs(spectrum[this->size - i])) / (j*256/this->size + 1);
+	if(idx <= this->size / 2)
+	  maskCurve[idx] += amp / (j*1024/(this->size*maskSpill) + 1);
       }
       // downward spill
-      for(int j = 1; j < this->maskSpill / 2; j++){
+      for(int j = 1; j < maskSpill / 2; j++){
 	int idx = i-j;
-	idx = (idx < 0 ? 0 : idx);
-	maskCurve[idx] += (abs(spectrum[i]) + abs(spectrum[this->size - i])) / (j*512/this->size + 1);
+	if(idx >= 0)
+	  maskCurve[idx] += amp / (j*2048/(this->size*maskSpill) + 1);
       }
-    }
+
+      if(i >= nextMaskSpillBand){
+	maskSpill += maskSpillBaseVal;
+	nextMaskSpillBand = maskSpill/maskSpillBaseVal * maskSpillBaseFreq * this->size / this->sampleFreq;
+      }
   }
   maskCurve[this->size / 2] += abs(spectrum[this->size / 2]);
 }
