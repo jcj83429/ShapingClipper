@@ -126,7 +126,7 @@ void ShapingClipper::clipToWindow(const double* windowedFrame, double* clippingD
 }
 
 void ShapingClipper::calculateMaskCurve(const Aquila::SpectrumType &spectrum, double* maskCurve){
-  const int maskSpillBaseVal = 1;
+  const int maskSpillBaseVal = 1 * (this->size / 256);
   const int maskSpillBaseFreq = 2000; //maskSpill = 1 at 2000 Hz
   double amp;
   int nextMaskSpillBand = maskSpillBaseFreq * this->size / this->sampleFreq;
@@ -147,13 +147,13 @@ void ShapingClipper::calculateMaskCurve(const Aquila::SpectrumType &spectrum, do
       for(int j = 1; j < maskSpill; j++){
 	int idx = i+j;
 	if(idx <= this->size / 2)
-	  maskCurve[idx] += amp / (j*1024/(this->size*maskSpill) + 1);
+	  maskCurve[idx] += amp / (4*j/maskSpill + 1);
       }
       // downward spill
       for(int j = 1; j < maskSpill / 2; j++){
 	int idx = i-j;
 	if(idx >= 0)
-	  maskCurve[idx] += amp / (j*2048/(this->size*maskSpill) + 1);
+	  maskCurve[idx] += amp / (8*j/maskSpill + 1);
       }
 
       if(i >= nextMaskSpillBand){
