@@ -85,7 +85,7 @@ void ShapingClipper::generateMarginCurve(){
 
   // the FM curve puts more distortion in the high frequencies to take advantage of pre/de-emphasis.
   // it also removes all distortion above 16khz as required by the FM stereo standard.
-  //int points[][2] = {{0,-100}, {100,-50}, {200,0}, {1000,20}, {5000,20}, {10000,10}, {16000,-5}, {17000,1000}}; //FM
+  //int points[][2] = {{0,-100}, {100,-20}, {200,0}, {1000,20}, {4000,20}, {10000,5}, {16000,-5}, {17000,1000}}; //FM
 
   int numPoints = 8;
   this->marginCurve[0] = points[0][1];
@@ -126,11 +126,13 @@ void ShapingClipper::clipToWindow(const double* windowedFrame, double* clippingD
 }
 
 void ShapingClipper::calculateMaskCurve(const Aquila::SpectrumType &spectrum, double* maskCurve){
-  const int maskSpillBaseVal = 1 * (this->size / 256);
+  const double maskSpillBaseVal = (this->size * 44100.0) / (256 * this->sampleFreq); //(size/256) * (48000/sampleFreq)
+  //const int maskSpillBaseVal = 1 * (this->size / 256);
   const int maskSpillBaseFreq = 2000; //maskSpill = 1 at 2000 Hz
   double amp;
   int nextMaskSpillBand = maskSpillBaseFreq * this->size / this->sampleFreq;
   int maskSpill = maskSpillBaseVal;
+  int maskSpillScale = 1;
 
   for(int j = 0; j < this->size / 2 + 1; j++)
     maskCurve[j] = 0;
@@ -157,8 +159,9 @@ void ShapingClipper::calculateMaskCurve(const Aquila::SpectrumType &spectrum, do
       }
 
       if(i >= nextMaskSpillBand){
-	maskSpill += maskSpillBaseVal;
-	nextMaskSpillBand = maskSpill/maskSpillBaseVal * maskSpillBaseFreq * this->size / this->sampleFreq;
+	maskSpillScale++;
+	maskSpill = maskSpillScale * maskSpillBaseVal;
+	nextMaskSpillBand = maskSpillScale * maskSpillBaseFreq * this->size / this->sampleFreq;
       }
   }
   maskCurve[this->size / 2] += abs(spectrum[this->size / 2]);
