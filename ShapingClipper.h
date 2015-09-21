@@ -73,10 +73,8 @@ class ShapingClipper
 
   /**
    *  Calculates the original signal level considering psychoacoustic masking.
-   *  Currently masking effect is limited to >6000Hz to avoid excessive
-   *  distortion in low frequencies..
-   *  TODO: make maskSpill scale with frequency to get logarithmic behaviour
-   *    so masking effect doesn't have to be limited to high frequencies.
+   *  Masking width scales with frequency.
+   *  maskCurve is logarithmic.
    */
   void calculateMaskCurve(const Aquila::SpectrumType &spectrum, double* maskCurve);
 

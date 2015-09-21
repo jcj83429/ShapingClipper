@@ -141,7 +141,7 @@ void ShapingClipper::calculateMaskCurve(const Aquila::SpectrumType &spectrum, do
     maskCurve[0+j] += abs(spectrum[0]) / (j*128/this->size + 1);
 
   for(int i = 1; i < this->size / 2; i++){
-    amp = abs(spectrum[i]) + abs(spectrum[this->size - i]);
+    amp = abs(spectrum[i])*2; // take advantage of spectrum symmetry for real signal
     //amp = amp / maskSpill;
     maskCurve[i] += amp;
 
@@ -165,21 +165,24 @@ void ShapingClipper::calculateMaskCurve(const Aquila::SpectrumType &spectrum, do
       }
   }
   maskCurve[this->size / 2] += abs(spectrum[this->size / 2]);
+
+  for(int i = 0; i < this->size / 2 + 1; i++)
+    maskCurve[i] = Aquila::dB(maskCurve[i]);
 }
 
 void ShapingClipper::limitClipSpectrum(Aquila::SpectrumType &clipSpectrum, const double* maskCurve){
   double* marginCurve = this->marginCurve.data(); // margin curve is already in dB
-  double relativeDistortionLevel = Aquila::dB(abs(clipSpectrum[0]) / maskCurve[0]) + marginCurve[0];
+  double relativeDistortionLevel = Aquila::dB(abs(clipSpectrum[0])) - maskCurve[0] + marginCurve[0];
   if(relativeDistortionLevel > 0)
     clipSpectrum[0] *= pow(10, -relativeDistortionLevel / 20);
   for(int i = 1; i < this->size / 2; i++){
-    relativeDistortionLevel = Aquila::dB((abs(clipSpectrum[i]) + abs(clipSpectrum[this->size - i])) / maskCurve[i]) + marginCurve[i];
+    relativeDistortionLevel = (Aquila::dB(abs(clipSpectrum[i])) + Aquila::dB(2)) - maskCurve[i] + marginCurve[i]; // take advantage of spectrum symmetry for real signal
     if(relativeDistortionLevel > 0){
       clipSpectrum[i] *= pow(10, -relativeDistortionLevel / 20);
       clipSpectrum[this->size - i] *= pow(10, -relativeDistortionLevel / 20);
     }
   }
-  relativeDistortionLevel = Aquila::dB(abs(clipSpectrum[this->size / 2]) / maskCurve[this->size / 2]) + marginCurve[this->size / 2];
+  relativeDistortionLevel = Aquila::dB(abs(clipSpectrum[this->size / 2])) - maskCurve[this->size / 2] + marginCurve[this->size / 2];
   if(relativeDistortionLevel > 0)
     clipSpectrum[this->size / 2] *= pow(10, -relativeDistortionLevel / 20);
 }
