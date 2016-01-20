@@ -9,6 +9,16 @@ ShapingClipper::ShapingClipper(int sampleRate, int fftSize, int clipLevel){
   this->fft = Aquila::FftFactory::getFft(fftSize);
 
   this->window = new Aquila::HannWindow(fftSize);
+  // 1/window to calculate unwindowed peak.
+  this->invWindow.resize(fftSize);
+  const double *rawWindow = this->window->toArray();
+  for(int i = 0; i < fftSize; i++){
+    if(rawWindow[i] > 0.1)
+      this->invWindow[i] = 1.00 / (rawWindow[i] * clipLevel);
+    else
+      this->invWindow[i] = 0.00;
+  }
+
   this->inFrame.resize(fftSize);
   this->outFrame.resize(fftSize);
   this->marginCurve.resize(fftSize/2 + 1);
@@ -38,11 +48,15 @@ void ShapingClipper::feed(const double* inSamples, double* outSamples){
     this->outFrame[i + this->size - this->overlap] = 0;
   }
   
-  double windowedFrame[this->size], clippingDelta[this->size];
+  double *windowedFrame = new double[this->size];
+  double *clippingDelta = new double[this->size];
+  double *maskCurve = new double[this->size/2 + 1];
+
+  double peak;
+  double totalMarginCurveShift = 0;
 
   applyWindow(this->inFrame.data(), windowedFrame);
   Aquila::SpectrumType origSpectrum = this->fft->fft(windowedFrame);
-  double maskCurve[this->size/2 + 1];
   calculateMaskCurve(origSpectrum, maskCurve);
 
   //clear clippingDelta
@@ -54,18 +68,26 @@ void ShapingClipper::feed(const double* inSamples, double* outSamples){
 
     clipToWindow(windowedFrame, clippingDelta);
     Aquila::SpectrumType clipSpectrum = this->fft->fft(clippingDelta);
-   
+
     limitClipSpectrum(clipSpectrum, maskCurve);
     
     this->fft->ifft(clipSpectrum, clippingDelta);
 
+    peak = 0;
+    for(int i=0; i<this->size; i++)
+      peak = std::max(peak, abs((windowedFrame[i] + clippingDelta[i]) * invWindow[i]));
+
+    double marginCurveShift = (peak > 1.01 ? Aquila::dB(peak) : 0);
+
+    totalMarginCurveShift += marginCurveShift;
     //be less strict in the next iteration
     for(int i = 0; i < this->size / 2 + 1; i++)
-      this->marginCurve[i] -= 2;
+      this->marginCurve[i] -= marginCurveShift;
   }
 
+  //restore strictness
   for(int i = 0; i < this->size / 2 + 1; i++)
-    this->marginCurve[i] += 8;
+    this->marginCurve[i] += totalMarginCurveShift;
 
   for(int i=0; i<this->size; i++)
     windowedFrame[i] += clippingDelta[i];
@@ -77,6 +99,10 @@ void ShapingClipper::feed(const double* inSamples, double* outSamples){
   for(int i = 0; i < this->overlap; i++)
     outSamples[i] = this->outFrame[i]/1.5;
     // 4 times overlap with hanning window results in 1.5 time increase in amplitude
+
+  delete[] windowedFrame;
+  delete[] clippingDelta;
+  delete[] maskCurve;
 }
 
 void ShapingClipper::generateMarginCurve(){

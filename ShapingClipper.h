@@ -46,7 +46,7 @@ class ShapingClipper
   Aquila::FrequencyType sampleFreq;
 
   Aquila::HannWindow* window;
-  std::vector<double> inFrame, outFrame, marginCurve;
+  std::vector<double> inFrame, outFrame, marginCurve, invWindow;
 
   /**
    *  Generates a basic psychoacoustic curve.
