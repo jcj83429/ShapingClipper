@@ -64,9 +64,9 @@ void ShapingClipper::feed(const double* inSamples, double* outSamples){
     clippingDelta[i] = 0;
 
   //repeat clipping process a few times to get more clipping
-  for(int i=0; i<4; i++){
+  for(int i=0; i<6; i++){
 
-    clipToWindow(windowedFrame, clippingDelta);
+    clipToWindow(windowedFrame, clippingDelta, (i >= 4 ? 2.0 : 1.0)); //last 2 rounds have boosted delta
     Aquila::SpectrumType clipSpectrum = this->fft->fft(clippingDelta);
 
     limitClipSpectrum(clipSpectrum, maskCurve);
@@ -77,7 +77,7 @@ void ShapingClipper::feed(const double* inSamples, double* outSamples){
     for(int i=0; i<this->size; i++)
       peak = std::max(peak, abs((windowedFrame[i] + clippingDelta[i]) * invWindow[i]));
 
-    double marginCurveShift = (peak > 1.01 ? Aquila::dB(peak) : 0);
+    double marginCurveShift = std::max(Aquila::dB(peak), 1.0);
 
     totalMarginCurveShift += marginCurveShift;
     //be less strict in the next iteration
@@ -107,10 +107,11 @@ void ShapingClipper::feed(const double* inSamples, double* outSamples){
 
 void ShapingClipper::generateMarginCurve(){
   // the normal curve trashes frequencies above 16khz (because I can't hear it...but some people might)
-  int points[][2] = {{0,-10}, {80,0}, {200,20}, {1000,15}, {6000,20}, {10000,25}, {16000,20}, {17000,-1000}}; //normal
+  int points[][2] = {{0,-10}, {80,0}, {200,20}, {1000,20}, {6000,25}, {10000,25}, {16000,20}, {20000,0}}; //normal
 
   // the FM curve puts more distortion in the high frequencies to take advantage of pre/de-emphasis.
   // it also removes all distortion above 16khz as required by the FM stereo standard.
+  // The FM curve may be outdated as it has not been tested with the current distortion shaping logic.
   //int points[][2] = {{0,-100}, {100,-20}, {200,0}, {1000,20}, {4000,20}, {10000,5}, {16000,-5}, {17000,1000}}; //FM
 
   int numPoints = 8;
