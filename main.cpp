@@ -25,8 +25,9 @@ int main(int argc, char* argv[])
     ShapingClipper clipperR(44100, 256, 32768*50/100);
     const int feedSize = clipperL.getFeedSize();
 
-    double outBufL[feedSize], outBufR[feedSize];
-    int16_t out16[feedSize*2];
+	double *outBufL = new double[feedSize];
+	double *outBufR = new double[feedSize];
+	int16_t *out16 = new int16_t[feedSize*2];
     Aquila::FramesCollection frmsL(wavL, feedSize);
     Aquila::FramesCollection frmsR(wavR, feedSize);
 
@@ -53,5 +54,9 @@ int main(int argc, char* argv[])
       frameN++;
     }
     
+	delete[] outBufL;
+	delete[] outBufR;
+	delete[] out16;
+
     return 0;
 }
