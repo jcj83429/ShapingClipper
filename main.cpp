@@ -131,14 +131,14 @@ void writeSamples(FILE* outFile, std::vector<double*> outChannelBufs, int channe
 
 int main(int argc, char* argv[])
 {
-    if(argc < 3){
-      printf("Usage: %s infile.wav outfile.wav", argv[0]);
+    if(argc < 4){
+      printf("Usage: %s <infile.wav> <outfile.wav> <clip level (0.0..1.0)>", argv[0]);
       return 1;
     }
 
 	FILE* inFile = fopen(argv[1], "rb");
 	FILE* outFile = fopen(argv[2], "wb");
-	int clipLevel = 50;
+	double clipLevel = atof(argv[3]);
 
 	if(inFile == NULL)
 		die("cannot open input file");
@@ -159,7 +159,7 @@ int main(int argc, char* argv[])
 
 	std::vector<ShapingClipper*> clippers;
 	for(int i = 0; i < channels; i++)
-		clippers.push_back(new ShapingClipper(sampleRate, 256, 32768*50/100));
+		clippers.push_back(new ShapingClipper(sampleRate, 256, fullScale*clipLevel));
 	const int feedSize = clippers[0]->getFeedSize();
 
 	std::vector<double*> inChannelBufs;
