@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <vector>
 #include <cstdarg>
+#include <cstring>
 #include "aquila/global.h"
 #include "aquila/source/WaveFile.h"
 #include "aquila/source/FramesCollection.h"
@@ -21,9 +22,9 @@ struct WaveFmt{
 	uint8_t bits_per_sample[2];
 };
 
-void die(char *format, ...){
+void die(const char *format, ...){
 	va_list args;
-	va_start(format, args);
+	va_start(args, format);
 	vprintf(format, args);
 	va_end(args);
 	printf("\n");
