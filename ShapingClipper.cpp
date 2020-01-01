@@ -53,7 +53,6 @@ void ShapingClipper::feed(const double* inSamples, double* outSamples){
   double *maskCurve = new double[this->size/2 + 1];
 
   double peak;
-  double totalMarginCurveShift = 0;
 
   applyWindow(this->inFrame.data(), windowedFrame);
   Aquila::SpectrumType origSpectrum = this->fft->fft(windowedFrame);
@@ -77,17 +76,12 @@ void ShapingClipper::feed(const double* inSamples, double* outSamples){
     for(int i=0; i<this->size; i++)
       peak = std::max<double>(peak, abs((windowedFrame[i] + clippingDelta[i]) * invWindow[i]));
 
-    double marginCurveShift = std::max<double>(Aquila::dB(peak), 1.0);
+    double maskCurveShift = std::max<double>(Aquila::dB(peak), 1.0);
 
-    totalMarginCurveShift += marginCurveShift;
     //be less strict in the next iteration
     for(int i = 0; i < this->size / 2 + 1; i++)
-      this->marginCurve[i] -= marginCurveShift;
+      maskCurve[i] += maskCurveShift;
   }
-
-  //restore strictness
-  for(int i = 0; i < this->size / 2 + 1; i++)
-    this->marginCurve[i] += totalMarginCurveShift;
 
   //limitPeak(windowedFrame);
 
@@ -191,22 +185,21 @@ void ShapingClipper::calculateMaskCurve(const Aquila::SpectrumType &spectrum, do
   maskCurve[this->size / 2] += abs(spectrum[this->size / 2]);
 
   for(int i = 0; i < this->size / 2 + 1; i++)
-    maskCurve[i] = Aquila::dB(maskCurve[i]);
+    maskCurve[i] = Aquila::dB(maskCurve[i]) - this->marginCurve[i];
 }
 
 void ShapingClipper::limitClipSpectrum(Aquila::SpectrumType &clipSpectrum, const double* maskCurve){
-  double* marginCurve = this->marginCurve.data(); // margin curve is already in dB
-  double relativeDistortionLevel = Aquila::dB(abs(clipSpectrum[0])) - maskCurve[0] + marginCurve[0];
+  double relativeDistortionLevel = Aquila::dB(abs(clipSpectrum[0])) - maskCurve[0];
   if(relativeDistortionLevel > 0)
     clipSpectrum[0] *= pow(10, -relativeDistortionLevel / 20);
   for(int i = 1; i < this->size / 2; i++){
-    relativeDistortionLevel = (Aquila::dB(abs(clipSpectrum[i])) + Aquila::dB(2)) - maskCurve[i] + marginCurve[i]; // take advantage of spectrum symmetry for real signal
+    relativeDistortionLevel = (Aquila::dB(abs(clipSpectrum[i])) + Aquila::dB(2)) - maskCurve[i]; // take advantage of spectrum symmetry for real signal
     if(relativeDistortionLevel > 0){
       clipSpectrum[i] *= pow(10, -relativeDistortionLevel / 20);
       clipSpectrum[this->size - i] *= pow(10, -relativeDistortionLevel / 20);
     }
   }
-  relativeDistortionLevel = Aquila::dB(abs(clipSpectrum[this->size / 2])) - maskCurve[this->size / 2] + marginCurve[this->size / 2];
+  relativeDistortionLevel = Aquila::dB(abs(clipSpectrum[this->size / 2])) - maskCurve[this->size / 2];
   if(relativeDistortionLevel > 0)
     clipSpectrum[this->size / 2] *= pow(10, -relativeDistortionLevel / 20);
 }
