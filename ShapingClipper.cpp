@@ -20,7 +20,7 @@ ShapingClipper::ShapingClipper(int sampleRate, int fftSize, int clipLevel){
   }
 
   this->inFrame.resize(fftSize);
-  this->outFrame.resize(fftSize);
+  this->outDistFrame.resize(fftSize);
   this->marginCurve.resize(fftSize/2 + 1);
   generateMarginCurve();
 }
@@ -41,11 +41,11 @@ void ShapingClipper::feed(const double* inSamples, double* outSamples){
   //shift in/out buffers
   for(int i = 0; i < this->size - this->overlap; i++){
     this->inFrame[i] = this->inFrame[i + this->overlap];
-    this->outFrame[i] = this->outFrame[i + this->overlap];
+    this->outDistFrame[i] = this->outDistFrame[i + this->overlap];
   }
   for(int i = 0; i < this->overlap; i++){
     this->inFrame[i + this->size - this->overlap] = inSamples[i];
-    this->outFrame[i + this->size - this->overlap] = 0;
+    this->outDistFrame[i + this->size - this->overlap] = 0;
   }
   
   double *windowedFrame = new double[this->size];
@@ -89,15 +89,12 @@ void ShapingClipper::feed(const double* inSamples, double* outSamples){
   for(int i = 0; i < this->size / 2 + 1; i++)
     this->marginCurve[i] += totalMarginCurveShift;
 
-  for(int i=0; i<this->size; i++)
-    windowedFrame[i] += clippingDelta[i];
-
   //limitPeak(windowedFrame);
 
-  applyWindow(windowedFrame, this->outFrame.data(), true); //overlap & add
+  applyWindow(clippingDelta, this->outDistFrame.data(), true); //overlap & add
   
   for(int i = 0; i < this->overlap; i++)
-    outSamples[i] = this->outFrame[i]/1.5;
+    outSamples[i] = this->inFrame[i] + this->outDistFrame[i]/1.5;
     // 4 times overlap with hanning window results in 1.5 time increase in amplitude
 
   delete[] windowedFrame;

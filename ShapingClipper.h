@@ -46,7 +46,14 @@ class ShapingClipper
   Aquila::FrequencyType sampleFreq;
 
   Aquila::HannWindow* window;
-  std::vector<double> inFrame, outFrame, marginCurve, invWindow;
+
+  /**
+   *  inFrame: unmodified input audio
+   *  outDistFrame: clipping distortion multiplied by 1.5. The 1.5 factor is due to overlap and add.
+   *  marginCurve: see generateMarginCurve
+   *  invWindow: inverse of the hanning window used by limitPeak
+   */
+  std::vector<double> inFrame, outDistFrame, marginCurve, invWindow;
 
   /**
    *  Generates a basic psychoacoustic curve.
