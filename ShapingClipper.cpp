@@ -74,7 +74,7 @@ void ShapingClipper::feed(const double* inSamples, double* outSamples){
 
     peak = 0;
     for(int i=0; i<this->size; i++)
-      peak = std::max<double>(peak, abs((windowedFrame[i] + clippingDelta[i]) * invWindow[i]));
+      peak = std::max<double>(peak, std::abs((windowedFrame[i] + clippingDelta[i]) * invWindow[i]));
 
     double maskCurveShift = std::max<double>(Aquila::dB(peak), 1.0);
 
