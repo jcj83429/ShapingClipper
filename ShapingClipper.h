@@ -57,7 +57,7 @@ class ShapingClipper
 
   /**
    *  Generates a basic psychoacoustic curve.
-   *  marginCurve is in dB and represents the minimum level difference between
+   *  marginCurve represents the minimum ratio between
    *  the clean input and the clipping distortion at each frequency
    */
   void generateMarginCurve();
