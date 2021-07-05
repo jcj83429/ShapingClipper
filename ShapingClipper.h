@@ -55,6 +55,9 @@ class ShapingClipper
    */
   std::vector<double> inFrame, outDistFrame, marginCurve, invWindow;
 
+  // these are buffers used by feed()
+  double *windowedFrame, *clippingDelta, *maskCurve;
+
   /**
    *  Generates a basic psychoacoustic curve.
    *  marginCurve represents the minimum ratio between

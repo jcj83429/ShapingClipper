@@ -22,11 +22,19 @@ ShapingClipper::ShapingClipper(int sampleRate, int fftSize, int clipLevel){
   this->inFrame.resize(fftSize);
   this->outDistFrame.resize(fftSize);
   this->marginCurve.resize(fftSize/2 + 1);
+
+  this->windowedFrame = new double[fftSize];
+  this->clippingDelta = new double[fftSize];
+  this->maskCurve = new double[fftSize/2 + 1];
+
   generateMarginCurve();
 }
 
 ShapingClipper::~ShapingClipper(){
   delete this->window;
+  delete[] this->windowedFrame;
+  delete[] this->clippingDelta;
+  delete[] this->maskCurve;
 }
 
 int ShapingClipper::getFeedSize(){
@@ -48,10 +56,6 @@ void ShapingClipper::feed(const double* inSamples, double* outSamples){
     this->outDistFrame[i + this->size - this->overlap] = 0;
   }
   
-  double *windowedFrame = new double[this->size];
-  double *clippingDelta = new double[this->size];
-  double *maskCurve = new double[this->size/2 + 1];
-
   double peak;
 
   applyWindow(this->inFrame.data(), windowedFrame);
@@ -90,10 +94,6 @@ void ShapingClipper::feed(const double* inSamples, double* outSamples){
   for(int i = 0; i < this->overlap; i++)
     outSamples[i] = this->inFrame[i] + this->outDistFrame[i]/1.5;
     // 4 times overlap with hanning window results in 1.5 time increase in amplitude
-
-  delete[] windowedFrame;
-  delete[] clippingDelta;
-  delete[] maskCurve;
 }
 
 void ShapingClipper::generateMarginCurve(){
