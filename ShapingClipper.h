@@ -5,8 +5,8 @@
 #include <vector>
 #include "aquila/global.h"
 #include "aquila/source/window/HannWindow.h"
-#include "aquila/transform/FftFactory.h"
 #include "aquila/functions.h"
+#include "pffft.h"
 
 class ShapingClipper
 {
@@ -42,7 +42,7 @@ class ShapingClipper
   int size;
   int overlap;
   int maskSpill;
-  std::shared_ptr<Aquila::Fft> fft;
+  PFFFT_Setup *pffft;
   Aquila::FrequencyType sampleFreq;
 
   Aquila::HannWindow* window;
@@ -53,10 +53,10 @@ class ShapingClipper
    *  marginCurve: see generateMarginCurve
    *  invWindow: inverse of the hanning window used by limitPeak
    */
-  std::vector<double> inFrame, outDistFrame, marginCurve, invWindow;
+  std::vector<float> inFrame, outDistFrame, marginCurve, invWindow;
 
   // these are buffers used by feed()
-  double *windowedFrame, *clippingDelta, *maskCurve;
+  float *windowedFrame, *clippingDelta, *maskCurve, *spectrumBuf;
 
   /**
    *  Generates a basic psychoacoustic curve.
@@ -69,7 +69,7 @@ class ShapingClipper
    *  Applies the window to the inFrame and store the result in the outFrame
    *  If addToOutFrame is true, the results is added to the outFrame instead
    */
-  void applyWindow(const double* inFrame, double* outFrame, const bool addToOutFrame=false);
+  void applyWindow(const float* inFrame, float* outFrame, const bool addToOutFrame=false);
 
   /**
    *  Clips the windowedFrame to the window scaled by the clipLevel.
@@ -79,24 +79,19 @@ class ShapingClipper
    *  into account.
    *  Should only be used with windowed input
    */
-  void clipToWindow(const double* windowedFrame, double* clippingDelta, double deltaBoost=1.0);
+  void clipToWindow(const float* windowedFrame, float* clippingDelta, float deltaBoost=1.0);
 
   /**
    *  Calculates the original signal level considering psychoacoustic masking.
    *  Masking width scales with frequency.
    *  maskCurve is logarithmic.
    */
-  void calculateMaskCurve(const Aquila::SpectrumType &spectrum, double* maskCurve);
+  void calculateMaskCurve(const float *spectrum, float* maskCurve);
 
   /**
    *  Based on the maskCurve and the marginCurve, limit the amount of
    *  distortion.
    */
-  void limitClipSpectrum(Aquila::SpectrumType &clipSpectrum, const double* maskCurve);
+  void limitClipSpectrum(float *clipSpectrum, const float* maskCurve);
 
-  /**
-   *  Scale the frame to the clipping threshold.
-   *  Not sure if this will be useful.
-   */
-  void limitPeak(double* windowedFrame);
 };

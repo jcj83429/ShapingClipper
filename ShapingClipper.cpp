@@ -6,7 +6,7 @@ ShapingClipper::ShapingClipper(int sampleRate, int fftSize, int clipLevel){
   this->clipLevel = clipLevel;
   this->overlap = fftSize/4;
   this->maskSpill = fftSize/64;
-  this->fft = Aquila::FftFactory::getFft(fftSize);
+  this->pffft = pffft_new_setup(fftSize, PFFFT_REAL);
 
   this->window = new Aquila::HannWindow(fftSize);
   // 1/window to calculate unwindowed peak.
@@ -23,9 +23,10 @@ ShapingClipper::ShapingClipper(int sampleRate, int fftSize, int clipLevel){
   this->outDistFrame.resize(fftSize);
   this->marginCurve.resize(fftSize/2 + 1);
 
-  this->windowedFrame = new double[fftSize];
-  this->clippingDelta = new double[fftSize];
-  this->maskCurve = new double[fftSize/2 + 1];
+  this->windowedFrame = new float[fftSize];
+  this->clippingDelta = new float[fftSize];
+  this->maskCurve = new float[fftSize/2 + 1];
+  this->spectrumBuf = new float[fftSize];
 
   generateMarginCurve();
 }
@@ -35,6 +36,8 @@ ShapingClipper::~ShapingClipper(){
   delete[] this->windowedFrame;
   delete[] this->clippingDelta;
   delete[] this->maskCurve;
+  delete[] this->spectrumBuf;
+  pffft_destroy_setup(this->pffft);
 }
 
 int ShapingClipper::getFeedSize(){
@@ -59,41 +62,41 @@ void ShapingClipper::feed(const double* inSamples, double* outSamples){
   double peak;
 
   applyWindow(this->inFrame.data(), windowedFrame);
-  Aquila::SpectrumType origSpectrum = this->fft->fft(windowedFrame);
-  calculateMaskCurve(origSpectrum, maskCurve);
+  pffft_transform_ordered(this->pffft, windowedFrame, spectrumBuf, NULL, PFFFT_FORWARD);
+  calculateMaskCurve(spectrumBuf, maskCurve);
 
   //clear clippingDelta
   for(int i=0; i<this->size; i++)
     clippingDelta[i] = 0;
 
+
   //repeat clipping process a few times to get more clipping
   for(int i=0; i<6; i++){
-
     clipToWindow(windowedFrame, clippingDelta, (i >= 4 ? 2.0 : 1.0)); //last 2 rounds have boosted delta
-    Aquila::SpectrumType clipSpectrum = this->fft->fft(clippingDelta);
+    pffft_transform_ordered(this->pffft, clippingDelta, spectrumBuf, NULL, PFFFT_FORWARD);
 
-    limitClipSpectrum(clipSpectrum, maskCurve);
+    limitClipSpectrum(spectrumBuf, maskCurve);
     
-    this->fft->ifft(clipSpectrum, clippingDelta);
+    pffft_transform_ordered(this->pffft, spectrumBuf, clippingDelta, NULL, PFFFT_BACKWARD);
+    // see pffft.h
+    for(int i = 0; i < this->size; i++) clippingDelta[i] /= this->size;
 
     peak = 0;
     for(int i=0; i<this->size; i++)
-      peak = std::max<double>(peak, std::abs((windowedFrame[i] + clippingDelta[i]) * invWindow[i]));
+      peak = std::max<float>(peak, std::abs((windowedFrame[i] + clippingDelta[i]) * invWindow[i]));
 
-    double maskCurveShift = std::max<double>(peak, 1.122); // 1.122 is 1dB
+    float maskCurveShift = std::max<float>(peak, 1.122); // 1.122 is 1dB
 
     //be less strict in the next iteration
     for(int i = 0; i < this->size / 2 + 1; i++)
       maskCurve[i] *= maskCurveShift;
   }
 
-  //limitPeak(windowedFrame);
-
   applyWindow(clippingDelta, this->outDistFrame.data(), true); //overlap & add
   
   for(int i = 0; i < this->overlap; i++)
     outSamples[i] = this->inFrame[i] + this->outDistFrame[i]/1.5;
-    // 4 times overlap with hanning window results in 1.5 time increase in amplitude
+    // 4 times overlap with squared hanning window results in 1.5 time increase in amplitude
 }
 
 void ShapingClipper::generateMarginCurve(){
@@ -126,7 +129,7 @@ void ShapingClipper::generateMarginCurve(){
   }
 }
 
-void ShapingClipper::applyWindow(const double* inFrame, double* outFrame, const bool addToOutFrame){
+void ShapingClipper::applyWindow(const float* inFrame, float* outFrame, const bool addToOutFrame){
   const double* window = this->window->toArray();
   for(int i = 0; i < this->size; i++){
     if(addToOutFrame)
@@ -136,11 +139,11 @@ void ShapingClipper::applyWindow(const double* inFrame, double* outFrame, const 
   }
 }
   
-void ShapingClipper::clipToWindow(const double* windowedFrame, double* clippingDelta, double deltaBoost){
+void ShapingClipper::clipToWindow(const float* windowedFrame, float* clippingDelta, float deltaBoost){
   const double* window = this->window->toArray();
   for(int i = 0; i < this->size; i++){
-    double limit = this->clipLevel * window[i];
-    double effectiveValue = windowedFrame[i] + clippingDelta[i];
+    float limit = this->clipLevel * window[i];
+    float effectiveValue = windowedFrame[i] + clippingDelta[i];
     if(effectiveValue > limit)
       clippingDelta[i] += (limit - effectiveValue)*deltaBoost;
     else if(effectiveValue < -limit)
@@ -148,11 +151,11 @@ void ShapingClipper::clipToWindow(const double* windowedFrame, double* clippingD
   }
 }
 
-void ShapingClipper::calculateMaskCurve(const Aquila::SpectrumType &spectrum, double* maskCurve){
+void ShapingClipper::calculateMaskCurve(const float *spectrum, float* maskCurve){
   const double maskSpillBaseVal = (this->size * 44100.0) / (256 * this->sampleFreq); //(size/256) * (48000/sampleFreq)
   //const int maskSpillBaseVal = 1 * (this->size / 256);
   const int maskSpillBaseFreq = 2000; //maskSpill = 1 at 2000 Hz
-  double amp;
+  float amp;
   int nextMaskSpillBand = maskSpillBaseFreq * this->size / this->sampleFreq;
   int maskSpill = maskSpillBaseVal;
   int maskSpillScale = 1;
@@ -160,12 +163,12 @@ void ShapingClipper::calculateMaskCurve(const Aquila::SpectrumType &spectrum, do
   for(int j = 0; j < this->size / 2 + 1; j++)
     maskCurve[j] = 0;
 
+  // handle bin 0 (DC)
   for(int j = 0; j < this->size / 64; j++)
-    maskCurve[0+j] += abs(spectrum[0]) / (j*128/this->size + 1);
+    maskCurve[0+j] += std::abs(spectrum[0]) / (j*128/this->size + 1);
 
   for(int i = 1; i < this->size / 2; i++){
-    amp = abs(spectrum[i])*2; // take advantage of spectrum symmetry for real signal
-    //amp = amp / maskSpill;
+    amp = abs(std::complex<float>(spectrum[2*i], spectrum[2*i + 1]));
     maskCurve[i] += amp;
 
       // upward spill
@@ -187,42 +190,30 @@ void ShapingClipper::calculateMaskCurve(const Aquila::SpectrumType &spectrum, do
 	nextMaskSpillBand = maskSpillScale * maskSpillBaseFreq * this->size / this->sampleFreq;
       }
   }
-  maskCurve[this->size / 2] += abs(spectrum[this->size / 2]);
+  // top bin (nyquist frequency) is stored in array element 1
+  maskCurve[this->size / 2] += std::abs(spectrum[1]);
 
   for(int i = 0; i < this->size / 2 + 1; i++)
     maskCurve[i] = maskCurve[i] / this->marginCurve[i];
 }
 
-void ShapingClipper::limitClipSpectrum(Aquila::SpectrumType &clipSpectrum, const double* maskCurve){
-  double relativeDistortionLevel = abs(clipSpectrum[0]) / maskCurve[0];
+void ShapingClipper::limitClipSpectrum(float *clipSpectrum, const float* maskCurve){
+  // bin 0
+  float relativeDistortionLevel = std::abs(clipSpectrum[0]) / maskCurve[0];
   if(relativeDistortionLevel > 1.0)
     clipSpectrum[0] /= relativeDistortionLevel;
+  // bin 1..N/2-1
   for(int i = 1; i < this->size / 2; i++){
-    relativeDistortionLevel = abs(clipSpectrum[i]) * 2 /  maskCurve[i]; // take advantage of spectrum symmetry for real signal
+    float real = clipSpectrum[i*2];
+    float imag = clipSpectrum[i*2 + 1];
+    relativeDistortionLevel = abs(std::complex<float>(real, imag)) / maskCurve[i];
     if(relativeDistortionLevel > 1.0){
-      clipSpectrum[i] /= relativeDistortionLevel;
-      clipSpectrum[this->size - i] /= relativeDistortionLevel;
+      clipSpectrum[i*2] /= relativeDistortionLevel;
+      clipSpectrum[i*2 + 1] /= relativeDistortionLevel;
     }
   }
-  relativeDistortionLevel = abs(clipSpectrum[this->size / 2]) / maskCurve[this->size / 2];
+  // bin N/2
+  relativeDistortionLevel = std::abs(clipSpectrum[1]) / maskCurve[this->size / 2];
   if(relativeDistortionLevel > 1.0)
-    clipSpectrum[this->size / 2] /= relativeDistortionLevel;
-}
-
-void ShapingClipper::limitPeak(double* windowedFrame){
-  const double* window = this->window->toArray();
-  double multiplier = 1;
-  for(int i = this->size / 4; i < this->size * 3 / 4; i++){
-    double absVal = abs(windowedFrame[i]) / this->clipLevel;
-    if(absVal > window[i]){
-      double newMult = window[i]/absVal;
-      if(newMult < multiplier){
-	multiplier = newMult;
-      }
-    }
-  }
-
-  if(multiplier < 0.9999)
-    for(int i = 0; i < this->size; i++)
-      windowedFrame[i] *= multiplier;
+    clipSpectrum[1] /= relativeDistortionLevel;
 }

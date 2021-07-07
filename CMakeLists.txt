@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 2.8)
-project(main CXX)
+project(main C CXX)
 
 # Force C++11
 if(CMAKE_COMPILER_IS_GNUCXX)
@@ -29,6 +29,6 @@ if(WIN32)
     endif()
 endif()
 
-add_executable(main main.cpp ShapingClipper.h ShapingClipper.cpp)
+add_executable(main main.cpp ShapingClipper.h ShapingClipper.cpp pffft.h pffft.c)
 target_link_libraries(main Aquila)
 target_link_libraries(main Ooura_fft)
