@@ -168,7 +168,10 @@ void ShapingClipper::calculateMaskCurve(const float *spectrum, float* maskCurve)
     maskCurve[0+j] += std::abs(spectrum[0]) / (j*128/this->size + 1);
 
   for(int i = 1; i < this->size / 2; i++){
-    amp = abs(std::complex<float>(spectrum[2*i], spectrum[2*i + 1]));
+    // although the negative frequencies are omitted because they are redundant,
+    // the magnitude of the positive frequencies are not doubled.
+    // Multiply the magnitude by 2 to simulate adding up the + and - frequencies.
+    amp = abs(std::complex<float>(spectrum[2*i], spectrum[2*i + 1])) * 2;
     maskCurve[i] += amp;
 
       // upward spill
@@ -206,7 +209,10 @@ void ShapingClipper::limitClipSpectrum(float *clipSpectrum, const float* maskCur
   for(int i = 1; i < this->size / 2; i++){
     float real = clipSpectrum[i*2];
     float imag = clipSpectrum[i*2 + 1];
-    relativeDistortionLevel = abs(std::complex<float>(real, imag)) / maskCurve[i];
+    // although the negative frequencies are omitted because they are redundant,
+    // the magnitude of the positive frequencies are not doubled.
+    // Multiply the magnitude by 2 to simulate adding up the + and - frequencies.
+    relativeDistortionLevel = abs(std::complex<float>(real, imag)) * 2 / maskCurve[i];
     if(relativeDistortionLevel > 1.0){
       clipSpectrum[i*2] /= relativeDistortionLevel;
       clipSpectrum[i*2 + 1] /= relativeDistortionLevel;
