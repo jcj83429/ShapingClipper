@@ -1,4 +1,6 @@
 #include "ShapingClipper.h"
+#include <algorithm>
+#include <complex>
 
 ShapingClipper::ShapingClipper(int sampleRate, int fftSize, int clipLevel){
   this->sampleFreq = sampleRate;
@@ -8,16 +10,9 @@ ShapingClipper::ShapingClipper(int sampleRate, int fftSize, int clipLevel){
   this->maskSpill = fftSize/64;
   this->pffft = pffft_new_setup(fftSize, PFFFT_REAL);
 
-  this->window = new Aquila::HannWindow(fftSize);
-  // 1/window to calculate unwindowed peak.
+  this->window.resize(fftSize);
   this->invWindow.resize(fftSize);
-  const double *rawWindow = this->window->toArray();
-  for(int i = 0; i < fftSize; i++){
-    if(rawWindow[i] > 0.1)
-      this->invWindow[i] = 1.00 / (rawWindow[i] * clipLevel);
-    else
-      this->invWindow[i] = 0.00;
-  }
+  generateHannWindow();
 
   this->inFrame.resize(fftSize);
   this->outDistFrame.resize(fftSize);
@@ -32,7 +27,6 @@ ShapingClipper::ShapingClipper(int sampleRate, int fftSize, int clipLevel){
 }
 
 ShapingClipper::~ShapingClipper(){
-  delete this->window;
   delete[] this->windowedFrame;
   delete[] this->clippingDelta;
   delete[] this->maskCurve;
@@ -99,6 +93,16 @@ void ShapingClipper::feed(const double* inSamples, double* outSamples){
     // 4 times overlap with squared hanning window results in 1.5 time increase in amplitude
 }
 
+void ShapingClipper::generateHannWindow() {
+    double pi = acos(-1);
+    for (int i = 0; i < this->size; i++) {
+        float value = 0.5 * (1 - cos(2 * pi * i / this->size));
+        this->window[i] = value;
+        // 1/window to calculate unwindowed peak.
+        this->invWindow[i] = value > 0.1 ? 1.0 / (value * clipLevel) : 0;
+    }
+}
+
 void ShapingClipper::generateMarginCurve(){
   // the normal curve trashes frequencies above 16khz (because I can't hear it...but some people might)
   int points[][2] = {{0,-10}, {80,0}, {200,20}, {1000,20}, {6000,25}, {10000,25}, {16000,20}, {20000,0}}; //normal
@@ -130,7 +134,7 @@ void ShapingClipper::generateMarginCurve(){
 }
 
 void ShapingClipper::applyWindow(const float* inFrame, float* outFrame, const bool addToOutFrame){
-  const double* window = this->window->toArray();
+  const float* window = this->window.data();
   for(int i = 0; i < this->size; i++){
     if(addToOutFrame)
       outFrame[i] += inFrame[i] * window[i];
@@ -140,7 +144,7 @@ void ShapingClipper::applyWindow(const float* inFrame, float* outFrame, const bo
 }
   
 void ShapingClipper::clipToWindow(const float* windowedFrame, float* clippingDelta, float deltaBoost){
-  const double* window = this->window->toArray();
+  const float* window = this->window.data();
   for(int i = 0; i < this->size; i++){
     float limit = this->clipLevel * window[i];
     float effectiveValue = windowedFrame[i] + clippingDelta[i];

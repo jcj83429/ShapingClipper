@@ -12,23 +12,4 @@ if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
     endif()
 endif()
 
-set(CMAKE_INCLUDE_PATH "${CMAKE_INCLUDE_PATH}" :..)
-
-# On Windows the library location must be explicitly specified
-if(WIN32)
-    if(AQUILA_ROOT)
-        set(AQUILA_INCLUDE_DIR "${AQUILA_ROOT}\\include")
-        set(AQUILA_LIB_DIR "${AQUILA_ROOT}\\lib")
-        message("AQUILA_ROOT: ${AQUILA_ROOT}")
-        message("AQUILA_INCLUDE_DIR: ${AQUILA_INCLUDE_DIR}")
-        message("AQUILA_LIB_DIR: ${AQUILA_LIB_DIR}")
-        include_directories(${AQUILA_INCLUDE_DIR})
-        link_directories(${AQUILA_LIB_DIR})
-    else()
-        message(FATAL_ERROR "Define AQUILA_ROOT when calling cmake.")
-    endif()
-endif()
-
 add_executable(main main.cpp ShapingClipper.h ShapingClipper.cpp pffft.h pffft.c)
-target_link_libraries(main Aquila)
-target_link_libraries(main Ooura_fft)

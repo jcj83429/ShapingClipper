@@ -3,9 +3,6 @@
  */
 
 #include <vector>
-#include "aquila/global.h"
-#include "aquila/source/window/HannWindow.h"
-#include "aquila/functions.h"
 #include "pffft.h"
 
 class ShapingClipper
@@ -43,9 +40,7 @@ class ShapingClipper
   int overlap;
   int maskSpill;
   PFFFT_Setup *pffft;
-  Aquila::FrequencyType sampleFreq;
-
-  Aquila::HannWindow* window;
+  float sampleFreq;
 
   /**
    *  inFrame: unmodified input audio
@@ -53,10 +48,15 @@ class ShapingClipper
    *  marginCurve: see generateMarginCurve
    *  invWindow: inverse of the hanning window used by limitPeak
    */
-  std::vector<float> inFrame, outDistFrame, marginCurve, invWindow;
+  std::vector<float> inFrame, outDistFrame, marginCurve, window, invWindow;
 
   // these are buffers used by feed()
   float *windowedFrame, *clippingDelta, *maskCurve, *spectrumBuf;
+
+  /**
+   *  Generate the Hann window and inverse window.
+   */
+  void generateHannWindow();
 
   /**
    *  Generates a basic psychoacoustic curve.
