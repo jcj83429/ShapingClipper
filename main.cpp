@@ -4,13 +4,6 @@
 #include <vector>
 #include <cstdarg>
 #include <cstring>
-#include "aquila/global.h"
-#include "aquila/source/WaveFile.h"
-#include "aquila/source/FramesCollection.h"
-#include "aquila/source/window/HannWindow.h"
-#include "aquila/transform/FftFactory.h"
-#include "aquila/tools/TextPlot.h"
-#include "aquila/functions.h"
 #include "ShapingClipper.h"
 
 struct WaveFmt{
