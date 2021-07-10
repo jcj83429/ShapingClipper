@@ -50,9 +50,6 @@ class ShapingClipper
    */
   std::vector<float> inFrame, outDistFrame, marginCurve, window, invWindow;
 
-  // these are buffers used by feed()
-  float *windowedFrame, *clippingDelta, *maskCurve, *spectrumBuf;
-
   /**
    *  Generate the Hann window and inverse window.
    */

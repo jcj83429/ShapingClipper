@@ -18,19 +18,10 @@ ShapingClipper::ShapingClipper(int sampleRate, int fftSize, float clipLevel){
   this->outDistFrame.resize(fftSize);
   this->marginCurve.resize(fftSize/2 + 1);
 
-  this->windowedFrame = new float[fftSize];
-  this->clippingDelta = new float[fftSize];
-  this->maskCurve = new float[fftSize/2 + 1];
-  this->spectrumBuf = new float[fftSize];
-
   generateMarginCurve();
 }
 
 ShapingClipper::~ShapingClipper(){
-  delete[] this->windowedFrame;
-  delete[] this->clippingDelta;
-  delete[] this->maskCurve;
-  delete[] this->spectrumBuf;
   pffft_destroy_setup(this->pffft);
 }
 
@@ -54,6 +45,10 @@ void ShapingClipper::feed(const float* inSamples, float* outSamples){
   }
   
   float peak;
+  float *windowedFrame = (float*) alloca(sizeof(float) * this->size);
+  float *clippingDelta = (float*) alloca(sizeof(float) * this->size);
+  float *spectrumBuf = (float*) alloca(sizeof(float) * this->size);
+  float *maskCurve = (float*) alloca(sizeof(float) * this->size/2 + 1);
 
   applyWindow(this->inFrame.data(), windowedFrame);
   pffft_transform_ordered(this->pffft, windowedFrame, spectrumBuf, NULL, PFFFT_FORWARD);
