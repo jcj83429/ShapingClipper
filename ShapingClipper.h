@@ -5,6 +5,9 @@
 #include <vector>
 #include "pffft.h"
 
+// should use 256 for <50kHz, 512 for <100kHz, 1024 for >100kHz
+#define SHAPINGCLIPPER_MAX_FFT_SIZE 1024
+
 class ShapingClipper
 {
  public:
@@ -48,7 +51,11 @@ class ShapingClipper
    *  marginCurve: see generateMarginCurve
    *  invWindow: inverse of the hanning window used by limitPeak
    */
-  std::vector<float> inFrame, outDistFrame, marginCurve, window, invWindow;
+  float inFrame[SHAPINGCLIPPER_MAX_FFT_SIZE];
+  float outDistFrame[SHAPINGCLIPPER_MAX_FFT_SIZE];
+  float marginCurve[SHAPINGCLIPPER_MAX_FFT_SIZE/2 + 1];
+  float window[SHAPINGCLIPPER_MAX_FFT_SIZE];
+  float invWindow[SHAPINGCLIPPER_MAX_FFT_SIZE];
 
   /**
    *  Generate the Hann window and inverse window.

@@ -10,13 +10,7 @@ ShapingClipper::ShapingClipper(int sampleRate, int fftSize, float clipLevel){
   this->maskSpill = fftSize/64;
   this->pffft = pffft_new_setup(fftSize, PFFFT_REAL);
 
-  this->window.resize(fftSize);
-  this->invWindow.resize(fftSize);
   generateHannWindow();
-
-  this->inFrame.resize(fftSize);
-  this->outDistFrame.resize(fftSize);
-  this->marginCurve.resize(fftSize/2 + 1);
 
   generateMarginCurve();
 }
@@ -50,7 +44,7 @@ void ShapingClipper::feed(const float* inSamples, float* outSamples){
   float *spectrumBuf = (float*) alloca(sizeof(float) * this->size);
   float *maskCurve = (float*) alloca(sizeof(float) * this->size/2 + 1);
 
-  applyWindow(this->inFrame.data(), windowedFrame);
+  applyWindow(this->inFrame, windowedFrame);
   pffft_transform_ordered(this->pffft, windowedFrame, spectrumBuf, NULL, PFFFT_FORWARD);
   calculateMaskCurve(spectrumBuf, maskCurve);
 
@@ -81,7 +75,7 @@ void ShapingClipper::feed(const float* inSamples, float* outSamples){
       maskCurve[i] *= maskCurveShift;
   }
 
-  applyWindow(clippingDelta, this->outDistFrame.data(), true); //overlap & add
+  applyWindow(clippingDelta, this->outDistFrame, true); //overlap & add
   
   for(int i = 0; i < this->overlap; i++)
     outSamples[i] = this->inFrame[i] + this->outDistFrame[i]/1.5;
@@ -129,7 +123,7 @@ void ShapingClipper::generateMarginCurve(){
 }
 
 void ShapingClipper::applyWindow(const float* inFrame, float* outFrame, const bool addToOutFrame){
-  const float* window = this->window.data();
+  const float* window = this->window;
   for(int i = 0; i < this->size; i++){
     if(addToOutFrame)
       outFrame[i] += inFrame[i] * window[i];
@@ -139,7 +133,7 @@ void ShapingClipper::applyWindow(const float* inFrame, float* outFrame, const bo
 }
   
 void ShapingClipper::clipToWindow(const float* windowedFrame, float* clippingDelta, float deltaBoost){
-  const float* window = this->window.data();
+  const float* window = this->window;
   for(int i = 0; i < this->size; i++){
     float limit = this->clipLevel * window[i];
     float effectiveValue = windowedFrame[i] + clippingDelta[i];
