@@ -66,14 +66,21 @@ class ShapingClipper
    *  inFrame: unmodified input audio
    *  outDistFrame: clipping distortion multiplied by 1.5. The 1.5 factor is due to overlap and add.
    *  marginCurve: see generateMarginCurve
+   *  window: the Hann window
    *  invWindow: inverse of the hanning window used by limitPeak
+   *  spreadTable: a (size/2 + 1) by (size/2 + 1) matrix containing each bin's contribution to each bin's calculated masking level
    */
-  std::vector<float> inFrame, outDistFrame, marginCurve, window, invWindow;
+  std::vector<float> inFrame, outDistFrame, marginCurve, window, invWindow, spreadTable;
 
   /**
    *  Generate the Hann window and inverse window.
    */
   void generateHannWindow();
+
+   /**
+   *  Generate the spreadTable used by calculateMaskCurve
+   */
+  void generateSpreadTable();
 
   /**
    *  Generates a basic psychoacoustic curve.
@@ -101,7 +108,7 @@ class ShapingClipper
   /**
    *  Calculates the original signal level considering psychoacoustic masking.
    *  Masking width scales with frequency.
-   *  maskCurve is logarithmic.
+   *  maskCurve is in linear scale.
    */
   void calculateMaskCurve(const float *spectrum, float* maskCurve);
 

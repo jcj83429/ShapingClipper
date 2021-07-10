@@ -19,8 +19,10 @@ ShapingClipper::ShapingClipper(int sampleRate, int fftSize, float clipLevel){
   this->inFrame.resize(fftSize);
   this->outDistFrame.resize(fftSize);
   this->marginCurve.resize(fftSize/2 + 1);
+  this->spreadTable.resize(((int64_t)fftSize / 2 + 1) * ((int64_t)fftSize / 2 + 1));
 
   generateMarginCurve();
+  generateSpreadTable();
 }
 
 ShapingClipper::~ShapingClipper(){
@@ -120,14 +122,42 @@ void ShapingClipper::generateHannWindow() {
     }
 }
 
+void ShapingClipper::generateSpreadTable() {
+    for (int i = 0; i < this->size / 2 + 1; i++) {
+        float sum = 0;
+        int baseIdx = i * (this->size / 2 + 1);
+        // Calculate tent-shape function in log-log scale.
+        // As an optimization, only consider bins close to i
+        // This reduces the number of multiplications needed in calculateMaskCurve
+        // The masking contribution at faraway bins is negligeable
+        int startBin = i * 3 / 4;
+        int endBin = std::min(this->size + 1, ((i + 1) * 4 + 2) / 3);
+        for (int j = startBin; j < endBin; j++) {
+            // add 0.5 so i=0 doesn't get log(0)
+            float relIdxLog = std::abs(log((j + 0.5) / (i + 0.5)));
+            float value;
+            if (j >= i) {
+                // mask up
+                value = exp(-relIdxLog * 40);
+            } else {
+                // mask down
+                value = exp(-relIdxLog * 80);
+            }
+            sum += value;
+            this->spreadTable[baseIdx + j] = value;
+        }
+        // now normalize it
+        for (int j = startBin; j < endBin; j++) {
+            this->spreadTable[baseIdx + j] /= sum;
+            //printf("%f ", spreadingFunction[baseIdx + j]);
+        }
+        //printf("\n\n");
+    }
+}
+
 void ShapingClipper::generateMarginCurve(){
   // the normal curve trashes frequencies above 16khz (because I can't hear it...but some people might)
-  int points[][2] = {{0,-10}, {80,0}, {200,20}, {1000,20}, {6000,25}, {10000,25}, {16000,20}, {20000,0}}; //normal
-
-  // the FM curve puts more distortion in the high frequencies to take advantage of pre/de-emphasis.
-  // it also removes all distortion above 16khz as required by the FM stereo standard.
-  // The FM curve may be outdated as it has not been tested with the current distortion shaping logic.
-  //int points[][2] = {{0,-100}, {100,-20}, {200,0}, {1000,20}, {4000,20}, {10000,5}, {16000,-5}, {17000,1000}}; //FM
+  int points[][2] = { {0,-10}, {80,-10}, {200,10}, {1000,20}, {4000,20}, {8000,15}, {16000,5}, {20000,-10} }; //normal
 
   int numPoints = 8;
   this->marginCurve[0] = points[0][1];
@@ -172,53 +202,35 @@ void ShapingClipper::clipToWindow(const float* windowedFrame, float* clippingDel
   }
 }
 
-void ShapingClipper::calculateMaskCurve(const float *spectrum, float* maskCurve){
-  const float maskSpillBaseVal = (this->size * 44100.0) / (256 * this->sampleFreq); //(size/256) * (48000/sampleFreq)
-  //const int maskSpillBaseVal = 1 * (this->size / 256);
-  const int maskSpillBaseFreq = 2000; //maskSpill = 1 at 2000 Hz
-  float amp;
-  int nextMaskSpillBand = maskSpillBaseFreq * this->size / this->sampleFreq;
-  int maskSpill = maskSpillBaseVal;
-  int maskSpillScale = 1;
-
-  for(int j = 0; j < this->size / 2 + 1; j++)
-    maskCurve[j] = 0;
-
-  // handle bin 0 (DC)
-  for(int j = 0; j < this->size / 64; j++)
-    maskCurve[0+j] += std::abs(spectrum[0]) / (j*128/this->size + 1);
-
-  for(int i = 1; i < this->size / 2; i++){
-    // although the negative frequencies are omitted because they are redundant,
-    // the magnitude of the positive frequencies are not doubled.
-    // Multiply the magnitude by 2 to simulate adding up the + and - frequencies.
-    amp = abs(std::complex<float>(spectrum[2*i], spectrum[2*i + 1])) * 2;
-    maskCurve[i] += amp;
-
-      // upward spill
-      for(int j = 1; j < maskSpill; j++){
-	int idx = i+j;
-	if(idx <= this->size / 2)
-	  maskCurve[idx] += amp / (4*j/maskSpill + 1);
-      }
-      // downward spill
-      for(int j = 1; j < maskSpill / 2; j++){
-	int idx = i-j;
-	if(idx >= 0)
-	  maskCurve[idx] += amp / (8*j/maskSpill + 1);
-      }
-
-      if(i >= nextMaskSpillBand){
-	maskSpillScale++;
-	maskSpill = maskSpillScale * maskSpillBaseVal;
-	nextMaskSpillBand = maskSpillScale * maskSpillBaseFreq * this->size / this->sampleFreq;
-      }
-  }
-  // top bin (nyquist frequency) is stored in array element 1
-  maskCurve[this->size / 2] += std::abs(spectrum[1]);
-
-  for(int i = 0; i < this->size / 2 + 1; i++)
-    maskCurve[i] = maskCurve[i] / this->marginCurve[i];
+void ShapingClipper::calculateMaskCurve(const float* spectrum, float* maskCurve) {
+    for (int i = 0; i < this->size / 2 + 1; i++) {
+        maskCurve[i] = 0;
+    }
+    for (int i = 0; i < this->size / 2 + 1; i++) {
+        float magnitude;
+        if (i == 0) {
+            magnitude = std::abs(spectrum[0]);
+        } else if (i == this->size / 2) {
+            magnitude = std::abs(spectrum[1]);
+        } else {
+            // although the negative frequencies are omitted because they are redundant,
+            // the magnitude of the positive frequencies are not doubled.
+            // Multiply the magnitude by 2 to simulate adding up the + and - frequencies.
+            magnitude = abs(std::complex<float>(spectrum[2 * i], spectrum[2 * i + 1])) * 2;
+        }
+        int baseIdx = i * (this->size / 2 + 1);
+        // As an optimization, only consider bins close to i
+        // This reduces the number of multiplications needed in calculateMaskCurve
+        // The masking contribution at faraway bins is negligeable
+        int startBin = i * 3 / 4;
+        int endBin = std::min(this->size + 1, ((i + 1) * 4 + 2) / 3);
+        for (int j = startBin; j < endBin; j++) {
+            maskCurve[j] += this->spreadTable[baseIdx + j] * magnitude;
+        }
+    }
+    for (int i = 0; i < this->size / 2 + 1; i++) {
+        maskCurve[i] = maskCurve[i] / this->marginCurve[i];
+    }
 }
 
 void ShapingClipper::limitClipSpectrum(float *clipSpectrum, const float* maskCurve){
