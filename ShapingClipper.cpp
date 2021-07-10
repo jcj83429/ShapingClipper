@@ -2,7 +2,7 @@
 #include <algorithm>
 #include <complex>
 
-ShapingClipper::ShapingClipper(int sampleRate, int fftSize, int clipLevel){
+ShapingClipper::ShapingClipper(int sampleRate, int fftSize, float clipLevel){
   this->sampleFreq = sampleRate;
   this->size = fftSize;
   this->clipLevel = clipLevel;
@@ -42,7 +42,7 @@ int ShapingClipper::getDelay(){
   return this->size - this->overlap;
 }
 
-void ShapingClipper::feed(const double* inSamples, double* outSamples){
+void ShapingClipper::feed(const float* inSamples, float* outSamples){
   //shift in/out buffers
   for(int i = 0; i < this->size - this->overlap; i++){
     this->inFrame[i] = this->inFrame[i + this->overlap];
@@ -53,7 +53,7 @@ void ShapingClipper::feed(const double* inSamples, double* outSamples){
     this->outDistFrame[i + this->size - this->overlap] = 0;
   }
   
-  double peak;
+  float peak;
 
   applyWindow(this->inFrame.data(), windowedFrame);
   pffft_transform_ordered(this->pffft, windowedFrame, spectrumBuf, NULL, PFFFT_FORWARD);
@@ -156,7 +156,7 @@ void ShapingClipper::clipToWindow(const float* windowedFrame, float* clippingDel
 }
 
 void ShapingClipper::calculateMaskCurve(const float *spectrum, float* maskCurve){
-  const double maskSpillBaseVal = (this->size * 44100.0) / (256 * this->sampleFreq); //(size/256) * (48000/sampleFreq)
+  const float maskSpillBaseVal = (this->size * 44100.0) / (256 * this->sampleFreq); //(size/256) * (48000/sampleFreq)
   //const int maskSpillBaseVal = 1 * (this->size / 256);
   const int maskSpillBaseFreq = 2000; //maskSpill = 1 at 2000 Hz
   float amp;

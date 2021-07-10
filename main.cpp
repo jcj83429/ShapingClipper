@@ -89,7 +89,7 @@ void writeWaveHeader(FILE* outFile, struct WaveFmt *fmt, uint32_t dataLength){
 	writeLengthField(outFile, dataLength);
 }
 
-void splitInterleavedSamples(uint8_t *inBufInterleaved, std::vector<double*> inChannelBufs, int channels, int samples, int bytesPerSample){
+void splitInterleavedSamples(uint8_t *inBufInterleaved, std::vector<float*> inChannelBufs, int channels, int samples, int bytesPerSample){
 	uint32_t signBit = 0x80 << ((bytesPerSample-1) * 8);
 	for(int i = 0; i < samples; i++){
 		for(int c = 0; c < channels; c++){
@@ -102,12 +102,12 @@ void splitInterleavedSamples(uint8_t *inBufInterleaved, std::vector<double*> inC
 					uSample |= 0xff << (b * 8);
 				}
 			}
-			inChannelBufs[c][i] = (double)(int32_t)uSample;
+			inChannelBufs[c][i] = (float)(int32_t)uSample;
 		}
 	}
 }
 
-void writeSamples(FILE* outFile, std::vector<double*> outChannelBufs, int channels, int samples, int bytesPerSample){
+void writeSamples(FILE* outFile, std::vector<float*> outChannelBufs, int channels, int samples, int bytesPerSample){
 	int ioBlockSize = channels * samples * bytesPerSample;
 	uint8_t *outBufInterleaved = new uint8_t[ioBlockSize];
 	int32_t maxAbsSampleVal = (0x80 << ((bytesPerSample - 1) * 8)) - 2;
@@ -132,7 +132,7 @@ int main(int argc, char* argv[])
 
 	FILE* inFile = fopen(argv[1], "rb");
 	FILE* outFile = fopen(argv[2], "wb");
-	double clipLevel = atof(argv[3]);
+	float clipLevel = atof(argv[3]);
 
 	if(inFile == NULL)
 		die("cannot open input file");
@@ -156,11 +156,11 @@ int main(int argc, char* argv[])
 		clippers.push_back(new ShapingClipper(sampleRate, 256, fullScale*clipLevel));
 	const int feedSize = clippers[0]->getFeedSize();
 
-	std::vector<double*> inChannelBufs;
-	std::vector<double*> outChannelBufs;
+	std::vector<float*> inChannelBufs;
+	std::vector<float*> outChannelBufs;
 	for(int i = 0; i < channels; i++){
-		inChannelBufs.push_back(new double[feedSize]);
-		outChannelBufs.push_back(new double[feedSize]);
+		inChannelBufs.push_back(new float[feedSize]);
+		outChannelBufs.push_back(new float[feedSize]);
 	}
 
 	int ioBlockSize = channels * feedSize * bytesPerSample;

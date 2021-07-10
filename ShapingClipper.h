@@ -14,7 +14,7 @@ class ShapingClipper
    *  fftSize should be a multiple of 4.
    *  clipLevel means symmetric clipping from -clipLevel to +clipLevel
    */
-  ShapingClipper(int sampleRate, int fftSize, int clipLevel=16384);
+  ShapingClipper(int sampleRate, int fftSize, float clipLevel=16384);
   ~ShapingClipper();
   
   /**
@@ -22,7 +22,7 @@ class ShapingClipper
    *  outSamples.
    *  The output is delayed by fftSize*3/4 samples.
    */
-  void feed(const double* inSamples, double* outSamples);
+  void feed(const float* inSamples, float* outSamples);
 
   /**
    *  Returns fftSize*3/4
@@ -33,7 +33,7 @@ class ShapingClipper
    *  Returns fftSize/4
    */
   int getFeedSize();
-  int clipLevel;
+  float clipLevel;
 
  private:
   int size;
