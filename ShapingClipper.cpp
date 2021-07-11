@@ -33,6 +33,10 @@ int ShapingClipper::getDelay(){
   return this->size - this->overlap;
 }
 
+void ShapingClipper::setClipLevel(float clipLevel) {
+  this->clipLevel = clipLevel;
+}
+
 void ShapingClipper::feed(const float* inSamples, float* outSamples){
   //shift in/out buffers
   for(int i = 0; i < this->size - this->overlap; i++){
@@ -73,6 +77,7 @@ void ShapingClipper::feed(const float* inSamples, float* outSamples){
     peak = 0;
     for(int i=0; i<this->size; i++)
       peak = std::max<float>(peak, std::abs((windowedFrame[i] + clippingDelta[i]) * invWindow[i]));
+    peak /= this->clipLevel;
 
     float maskCurveShift = std::max<float>(peak, 1.122); // 1.122 is 1dB
 
@@ -94,7 +99,7 @@ void ShapingClipper::generateHannWindow() {
         float value = 0.5 * (1 - cos(2 * pi * i / this->size));
         this->window[i] = value;
         // 1/window to calculate unwindowed peak.
-        this->invWindow[i] = value > 0.1 ? 1.0 / (value * clipLevel) : 0;
+        this->invWindow[i] = value > 0.1 ? 1.0 / value : 0;
     }
 }
 

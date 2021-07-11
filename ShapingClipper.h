@@ -33,7 +33,8 @@ class ShapingClipper
    *  Returns fftSize/4
    */
   int getFeedSize();
-  float clipLevel;
+
+  void setClipLevel(float clipLevel);
 
  private:
   int size;
@@ -41,6 +42,7 @@ class ShapingClipper
   int maskSpill;
   PFFFT_Setup *pffft;
   float sampleFreq;
+  float clipLevel;
 
   /**
    *  inFrame: unmodified input audio
