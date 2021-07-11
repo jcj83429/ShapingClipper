@@ -131,7 +131,7 @@ void ShapingClipper::generateSpreadTable() {
         // This reduces the number of multiplications needed in calculateMaskCurve
         // The masking contribution at faraway bins is negligeable
         int startBin = i * 3 / 4;
-        int endBin = std::min(this->size + 1, ((i + 1) * 4 + 2) / 3);
+        int endBin = std::min(this->size / 2 + 1, ((i + 1) * 4 + 2) / 3);
         for (int j = startBin; j < endBin; j++) {
             // add 0.5 so i=0 doesn't get log(0)
             float relIdxLog = std::abs(log((j + 0.5) / (i + 0.5)));
@@ -223,7 +223,7 @@ void ShapingClipper::calculateMaskCurve(const float* spectrum, float* maskCurve)
         // This reduces the number of multiplications needed in calculateMaskCurve
         // The masking contribution at faraway bins is negligeable
         int startBin = i * 3 / 4;
-        int endBin = std::min(this->size + 1, ((i + 1) * 4 + 2) / 3);
+        int endBin = std::min(this->size / 2 + 1, ((i + 1) * 4 + 2) / 3);
         for (int j = startBin; j < endBin; j++) {
             maskCurve[j] += this->spreadTable[baseIdx + j] * magnitude;
         }
