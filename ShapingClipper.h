@@ -34,7 +34,16 @@ class ShapingClipper
    */
   int getFeedSize();
 
+  /**
+   *  Set the clipping level in sample value
+   */
   void setClipLevel(float clipLevel);
+
+  /**
+   *  Set the number of clipping iterations.
+   *  Setting iterations to 0 effectively works as a bypass.
+   */
+  void setIterations(int iterations);
 
  private:
   int size;
@@ -43,6 +52,7 @@ class ShapingClipper
   PFFFT_Setup *pffft;
   float sampleFreq;
   float clipLevel;
+  float iterations;
 
   /**
    *  inFrame: unmodified input audio

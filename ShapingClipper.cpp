@@ -6,6 +6,7 @@ ShapingClipper::ShapingClipper(int sampleRate, int fftSize, float clipLevel){
   this->sampleFreq = sampleRate;
   this->size = fftSize;
   this->clipLevel = clipLevel;
+  this->iterations = 6;
   this->overlap = fftSize/4;
   this->maskSpill = fftSize/64;
   this->pffft = pffft_new_setup(fftSize, PFFFT_REAL);
@@ -37,6 +38,10 @@ void ShapingClipper::setClipLevel(float clipLevel) {
   this->clipLevel = clipLevel;
 }
 
+void ShapingClipper::setIterations(int iterations) {
+  this->iterations = iterations;
+}
+
 void ShapingClipper::feed(const float* inSamples, float* outSamples){
   //shift in/out buffers
   for(int i = 0; i < this->size - this->overlap; i++){
@@ -64,8 +69,10 @@ void ShapingClipper::feed(const float* inSamples, float* outSamples){
 
 
   //repeat clipping process a few times to get more clipping
-  for(int i=0; i<6; i++){
-    clipToWindow(windowedFrame, clippingDelta, (i >= 4 ? 2.0 : 1.0)); //last 2 rounds have boosted delta
+  for(int i = 0; i < this->iterations; i++){
+    // the last 1/3 rounds have boosted delta
+    float deltaBoost = i >= this->iterations - this->iterations / 3 ? 2.0 : 1.0;
+    clipToWindow(windowedFrame, clippingDelta, deltaBoost);
     pffft_transform_ordered(this->pffft, clippingDelta, spectrumBuf, NULL, PFFFT_FORWARD);
 
     limitClipSpectrum(spectrumBuf, maskCurve);
