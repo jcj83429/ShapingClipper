@@ -1261,12 +1261,13 @@ void pffft_destroy_setup(PFFFT_Setup *s) {
 }
 
 int pffft_new_setup_no_malloc(int N, pffft_transform_t transform, void *buff, int buffsize) {
+  char* buffc = buff;
   int Ncvec = (transform == PFFFT_REAL ? N/2 : N)/SIMD_SZ;
   int data_size = 2*Ncvec * sizeof(v4sf);
-  PFFFT_Setup *s = (PFFFT_Setup*)buff;
-  void *data = buff + sizeof(PFFFT_Setup);
-  data = (void*) (((size_t)data + MALLOC_V4SF_ALIGNMENT - 1) & ~((size_t) (MALLOC_V4SF_ALIGNMENT-1)));
-  if (buffsize < data + data_size - buff) {
+  PFFFT_Setup *s = (PFFFT_Setup*)buffc;
+  char *data = buffc + sizeof(PFFFT_Setup);
+  data = (char*) (((size_t)data + MALLOC_V4SF_ALIGNMENT - 1) & ~((size_t) (MALLOC_V4SF_ALIGNMENT-1)));
+  if (buffsize < data - buffc + data_size ) {
     return 0;
   }
 
@@ -1279,7 +1280,7 @@ int pffft_new_setup_no_malloc(int N, pffft_transform_t transform, void *buff, in
     return 0;
   }
 
-  return data + data_size - buff;
+  return data - buffc + data_size;
 }
 
 #if !defined(PFFFT_SIMD_DISABLE)
