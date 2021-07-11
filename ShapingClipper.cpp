@@ -8,7 +8,12 @@ ShapingClipper::ShapingClipper(int sampleRate, int fftSize, float clipLevel){
   this->clipLevel = clipLevel;
   this->overlap = fftSize/4;
   this->maskSpill = fftSize/64;
-  this->pffft = pffft_new_setup(fftSize, PFFFT_REAL);
+  if(pffft_new_setup_no_malloc(fftSize, PFFFT_REAL, this->pffftSetupRaw, sizeof(this->pffftSetupRaw))){
+    this->pffft = (PFFFT_Setup*) this->pffftSetupRaw;
+  }else{
+    printf("ShapingClipper: pffft_new_setup_no_malloc failed\n");
+    this->pffft = 0;
+  }
 
   generateHannWindow();
 
@@ -28,6 +33,9 @@ int ShapingClipper::getDelay(){
 }
 
 void ShapingClipper::feed(const float* inSamples, float* outSamples){
+  if(!this->pffft){
+    return;
+  }
   //shift in/out buffers
   for(int i = 0; i < this->size - this->overlap; i++){
     this->inFrame[i] = this->inFrame[i + this->overlap];

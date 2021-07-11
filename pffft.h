@@ -79,6 +79,10 @@
 
 #include <stddef.h> // for size_t
 
+/* SSE and co like 16-bytes aligned pointers */
+#define MALLOC_V4SF_ALIGNMENT 64 // with a 64-byte alignment, we are even aligned on L2 cache lines...
+#define PFFFT_SETUP_MIN_SIZE(n, transform) (sizeof(PFFFT_Setup) + MALLOC_V4SF_ALIGNMENT + sizeof(float) * n * (transform == PFFFT_REAL ? 1 : 2))
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -95,6 +99,16 @@ extern "C" {
   /* type of transform */
   typedef enum { PFFFT_REAL, PFFFT_COMPLEX } pffft_transform_t;
 
+  struct PFFFT_Setup {
+    int     N;
+    int     Ncvec; // nb of complex simd vectors (N/4 if PFFFT_COMPLEX, N/8 if PFFFT_REAL)
+    int ifac[15];
+    pffft_transform_t transform;
+    float *data; // allocated room for twiddle coefs
+    float *e;    // points into 'data' , N/4*3 elements
+    float *twiddle; // points into 'data', N/4 elements
+  };
+
   /*
     prepare for performing transforms of size N -- the returned
     PFFFT_Setup structure is read-only so it can safely be shared by
@@ -102,6 +116,14 @@ extern "C" {
   */
   PFFFT_Setup *pffft_new_setup(int N, pffft_transform_t transform);
   void pffft_destroy_setup(PFFFT_Setup *);
+
+  /*
+    A malloc-free version of pffft_new_setup that takes a buffer and uses it.
+    Returns the number of bytes in buff used for success, or 0 for failure.
+    If success, the PFFFT_Setup struct will be located at buff.
+  */
+  int pffft_new_setup_no_malloc(int N, pffft_transform_t transform, void *buff, int buffsize);
+
   /* 
      Perform a Fourier transform , The z-domain data is stored in the
      most efficient order for transforming it back, or using it for

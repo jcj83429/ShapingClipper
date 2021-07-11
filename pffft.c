@@ -251,8 +251,6 @@ void validate_pffft_simd() {
 void validate_pffft_simd() {} // allow test_pffft.c to call this function even when simd is not available..
 #endif //!PFFFT_SIMD_DISABLE
 
-/* SSE and co like 16-bytes aligned pointers */
-#define MALLOC_V4SF_ALIGNMENT 64 // with a 64-byte alignment, we are even aligned on L2 cache lines...
 void *pffft_aligned_malloc(size_t nb_bytes) {
   void *p, *p0 = malloc(nb_bytes + MALLOC_V4SF_ALIGNMENT);
   if (!p0) return (void *) 0;
@@ -1197,32 +1195,11 @@ v4sf *cfftf1_ps(int n, const v4sf *input_readonly, v4sf *work1, v4sf *work2, con
 }
 
 
-struct PFFFT_Setup {
-  int     N;
-  int     Ncvec; // nb of complex simd vectors (N/4 if PFFFT_COMPLEX, N/8 if PFFFT_REAL)
-  int ifac[15];
-  pffft_transform_t transform;
-  v4sf *data; // allocated room for twiddle coefs
-  float *e;    // points into 'data' , N/4*3 elements
-  float *twiddle; // points into 'data', N/4 elements
-};
-
-PFFFT_Setup *pffft_new_setup(int N, pffft_transform_t transform) {
-  PFFFT_Setup *s = (PFFFT_Setup*)malloc(sizeof(PFFFT_Setup));
+// return 1 for success, 0 for failure
+static int pffft_populate_setup(int N, pffft_transform_t transform, PFFFT_Setup *s) {
   int k, m;
-  /* unfortunately, the fft size must be a multiple of 16 for complex FFTs 
-     and 32 for real FFTs -- a lot of stuff would need to be rewritten to
-     handle other cases (or maybe just switch to a scalar fft, I don't know..) */
-  if (transform == PFFFT_REAL) { assert((N%(2*SIMD_SZ*SIMD_SZ))==0 && N>0); }
-  if (transform == PFFFT_COMPLEX) { assert((N%(SIMD_SZ*SIMD_SZ))==0 && N>0); }
-  //assert((N % 32) == 0);
   s->N = N;
-  s->transform = transform;  
-  /* nb of complex simd vectors */
-  s->Ncvec = (transform == PFFFT_REAL ? N/2 : N)/SIMD_SZ;
-  s->data = (v4sf*)pffft_aligned_malloc(2*s->Ncvec * sizeof(v4sf));
-  s->e = (float*)s->data;
-  s->twiddle = (float*)(s->data + (2*s->Ncvec*(SIMD_SZ-1))/SIMD_SZ);  
+  s->transform = transform;
 
   if (transform == PFFFT_REAL) {
     for (k=0; k < s->Ncvec; ++k) {
@@ -1251,6 +1228,26 @@ PFFFT_Setup *pffft_new_setup(int N, pffft_transform_t transform) {
   /* check that N is decomposable with allowed prime factors */
   for (k=0, m=1; k < s->ifac[1]; ++k) { m *= s->ifac[2+k]; }
   if (m != N/SIMD_SZ) {
+    return 0;
+  }
+  return 1;
+}
+
+PFFFT_Setup *pffft_new_setup(int N, pffft_transform_t transform) {
+  PFFFT_Setup *s = (PFFFT_Setup*)malloc(sizeof(PFFFT_Setup));
+  /* unfortunately, the fft size must be a multiple of 16 for complex FFTs 
+     and 32 for real FFTs -- a lot of stuff would need to be rewritten to
+     handle other cases (or maybe just switch to a scalar fft, I don't know..) */
+  if (transform == PFFFT_REAL) { assert((N%(2*SIMD_SZ*SIMD_SZ))==0 && N>0); }
+  if (transform == PFFFT_COMPLEX) { assert((N%(SIMD_SZ*SIMD_SZ))==0 && N>0); }
+  //assert((N % 32) == 0);
+  /* nb of complex simd vectors */
+  s->Ncvec = (transform == PFFFT_REAL ? N/2 : N)/SIMD_SZ;
+  s->data = (float*)pffft_aligned_malloc(2*s->Ncvec * sizeof(v4sf));
+  s->e = s->data;
+  s->twiddle = s->data + (2*s->Ncvec*(SIMD_SZ-1));
+
+  if (!pffft_populate_setup(N, transform, s)) {
     pffft_destroy_setup(s); s = 0;
   }
 
@@ -1261,6 +1258,28 @@ PFFFT_Setup *pffft_new_setup(int N, pffft_transform_t transform) {
 void pffft_destroy_setup(PFFFT_Setup *s) {
   pffft_aligned_free(s->data);
   free(s);
+}
+
+int pffft_new_setup_no_malloc(int N, pffft_transform_t transform, void *buff, int buffsize) {
+  int Ncvec = (transform == PFFFT_REAL ? N/2 : N)/SIMD_SZ;
+  int data_size = 2*Ncvec * sizeof(v4sf);
+  PFFFT_Setup *s = (PFFFT_Setup*)buff;
+  void *data = buff + sizeof(PFFFT_Setup);
+  data = (void*) (((size_t)data + MALLOC_V4SF_ALIGNMENT - 1) & ~((size_t) (MALLOC_V4SF_ALIGNMENT-1)));
+  if (buffsize < data + data_size - buff) {
+    return 0;
+  }
+
+  s->Ncvec = Ncvec;
+  s->data = (float*)data;
+  s->e = s->data;
+  s->twiddle = s->data + (2*s->Ncvec*(SIMD_SZ-1));
+
+  if (!pffft_populate_setup(N, transform, s)) {
+    return 0;
+  }
+
+  return data + data_size - buff;
 }
 
 #if !defined(PFFFT_SIMD_DISABLE)

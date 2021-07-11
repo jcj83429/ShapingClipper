@@ -44,6 +44,7 @@ class ShapingClipper
   int maskSpill;
   PFFFT_Setup *pffft;
   float sampleFreq;
+  char pffftSetupRaw[PFFFT_SETUP_MIN_SIZE(SHAPINGCLIPPER_MAX_FFT_SIZE, PFFFT_REAL)];
 
   /**
    *  inFrame: unmodified input audio
