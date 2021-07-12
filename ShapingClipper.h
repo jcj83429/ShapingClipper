@@ -45,6 +45,13 @@ class ShapingClipper
    */
   void setIterations(int iterations);
 
+  /**
+   * Set the adaptive distortion strength.
+   * The adaptive distortion strength affects how easily the clipper gives up
+   * distortion control to reach the clip level target.
+   */
+  void setAdaptiveDistortionStrength(float strength);
+
  private:
   int size;
   int overlap;
@@ -53,6 +60,7 @@ class ShapingClipper
   float sampleFreq;
   float clipLevel;
   float iterations;
+  float adaptiveDistortionStrength;
 
   /**
    *  inFrame: unmodified input audio

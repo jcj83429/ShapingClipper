@@ -7,6 +7,7 @@ ShapingClipper::ShapingClipper(int sampleRate, int fftSize, float clipLevel){
   this->size = fftSize;
   this->clipLevel = clipLevel;
   this->iterations = 6;
+  this->adaptiveDistortionStrength = 1.0;
   this->overlap = fftSize/4;
   this->maskSpill = fftSize/64;
   this->pffft = pffft_new_setup(fftSize, PFFFT_REAL);
@@ -40,6 +41,10 @@ void ShapingClipper::setClipLevel(float clipLevel) {
 
 void ShapingClipper::setIterations(int iterations) {
   this->iterations = iterations;
+}
+
+void ShapingClipper::setAdaptiveDistortionStrength(float strength) {
+  this->adaptiveDistortionStrength = strength;
 }
 
 void ShapingClipper::feed(const float* inSamples, float* outSamples){
@@ -87,6 +92,7 @@ void ShapingClipper::feed(const float* inSamples, float* outSamples){
     peak /= this->clipLevel;
 
     float maskCurveShift = std::max<float>(peak, 1.122); // 1.122 is 1dB
+    maskCurveShift = 1.0 + (maskCurveShift - 1.0) * this->adaptiveDistortionStrength;
 
     //be less strict in the next iteration
     for(int i = 0; i < this->size / 2 + 1; i++)
