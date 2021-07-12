@@ -47,7 +47,7 @@ void ShapingClipper::setAdaptiveDistortionStrength(float strength) {
   this->adaptiveDistortionStrength = strength;
 }
 
-void ShapingClipper::feed(const float* inSamples, float* outSamples){
+void ShapingClipper::feed(const float* inSamples, float* outSamples, bool diffOnly){
   //shift in/out buffers
   for(int i = 0; i < this->size - this->overlap; i++){
     this->inFrame[i] = this->inFrame[i + this->overlap];
@@ -101,9 +101,13 @@ void ShapingClipper::feed(const float* inSamples, float* outSamples){
 
   applyWindow(clippingDelta, this->outDistFrame.data(), true); //overlap & add
   
-  for(int i = 0; i < this->overlap; i++)
-    outSamples[i] = this->inFrame[i] + this->outDistFrame[i]/1.5;
+  for(int i = 0; i < this->overlap; i++) {
+    outSamples[i] = this->outDistFrame[i]/1.5;
     // 4 times overlap with squared hanning window results in 1.5 time increase in amplitude
+    if(!diffOnly) {
+      outSamples[i] += this->inFrame[i];
+    }
+  }
 }
 
 void ShapingClipper::generateHannWindow() {

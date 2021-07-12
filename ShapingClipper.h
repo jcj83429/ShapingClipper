@@ -22,7 +22,7 @@ class ShapingClipper
    *  outSamples.
    *  The output is delayed by fftSize*3/4 samples.
    */
-  void feed(const float* inSamples, float* outSamples);
+  void feed(const float* inSamples, float* outSamples, bool diffOnly=false);
 
   /**
    *  Returns fftSize*3/4
