@@ -55,7 +55,7 @@ class ShapingClipper
  private:
   int size;
   int overlap;
-  int maskSpill;
+  int numPsyBins;
   PFFFT_Setup *pffft;
   float sampleFreq;
   float clipLevel;

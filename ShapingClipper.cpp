@@ -9,8 +9,17 @@ ShapingClipper::ShapingClipper(int sampleRate, int fftSize, float clipLevel){
   this->iterations = 6;
   this->adaptiveDistortionStrength = 1.0;
   this->overlap = fftSize/4;
-  this->maskSpill = fftSize/64;
   this->pffft = pffft_new_setup(fftSize, PFFFT_REAL);
+
+  // The psy masking calculation is O(n^2),
+  // so skip it for frequencies not covered by base sampling rantes (i.e. 44k)
+  if(sampleRate <= 50000) {
+    this->numPsyBins = fftSize / 2;
+  } else if(sampleRate <= 100000) {
+    this->numPsyBins = fftSize / 4;
+  } else {
+    this->numPsyBins = fftSize / 8;
+  }
 
   this->window.resize(fftSize);
   this->invWindow.resize(fftSize);
@@ -19,7 +28,7 @@ ShapingClipper::ShapingClipper(int sampleRate, int fftSize, float clipLevel){
   this->inFrame.resize(fftSize);
   this->outDistFrame.resize(fftSize);
   this->marginCurve.resize(fftSize/2 + 1);
-  this->spreadTable.resize(((int64_t)fftSize / 2 + 1) * ((int64_t)fftSize / 2 + 1));
+  this->spreadTable.resize((int64_t)this->numPsyBins * (int64_t)this->numPsyBins);
 
   generateMarginCurve();
   generateSpreadTable();
@@ -123,15 +132,15 @@ void ShapingClipper::generateHannWindow() {
 }
 
 void ShapingClipper::generateSpreadTable() {
-    for (int i = 0; i < this->size / 2 + 1; i++) {
+    for (int i = 0; i < this->numPsyBins; i++) {
         float sum = 0;
-        int baseIdx = i * (this->size / 2 + 1);
+        int baseIdx = i * this->numPsyBins;
         // Calculate tent-shape function in log-log scale.
         // As an optimization, only consider bins close to i
         // This reduces the number of multiplications needed in calculateMaskCurve
         // The masking contribution at faraway bins is negligeable
         int startBin = i * 3 / 4;
-        int endBin = std::min(this->size / 2 + 1, ((i + 1) * 4 + 2) / 3);
+        int endBin = std::min(this->numPsyBins, ((i + 1) * 4 + 2) / 3);
         for (int j = startBin; j < endBin; j++) {
             // add 0.5 so i=0 doesn't get log(0)
             float relIdxLog = std::abs(log((j + 0.5) / (i + 0.5)));
@@ -206,7 +215,7 @@ void ShapingClipper::calculateMaskCurve(const float* spectrum, float* maskCurve)
     for (int i = 0; i < this->size / 2 + 1; i++) {
         maskCurve[i] = 0;
     }
-    for (int i = 0; i < this->size / 2 + 1; i++) {
+    for (int i = 0; i < this->numPsyBins; i++) {
         float magnitude;
         if (i == 0) {
             magnitude = std::abs(spectrum[0]);
@@ -218,16 +227,31 @@ void ShapingClipper::calculateMaskCurve(const float* spectrum, float* maskCurve)
             // Multiply the magnitude by 2 to simulate adding up the + and - frequencies.
             magnitude = abs(std::complex<float>(spectrum[2 * i], spectrum[2 * i + 1])) * 2;
         }
-        int baseIdx = i * (this->size / 2 + 1);
+        int baseIdx = i * this->numPsyBins;
         // As an optimization, only consider bins close to i
         // This reduces the number of multiplications needed in calculateMaskCurve
         // The masking contribution at faraway bins is negligeable
         int startBin = i * 3 / 4;
-        int endBin = std::min(this->size / 2 + 1, ((i + 1) * 4 + 2) / 3);
+        int endBin = std::min(this->numPsyBins, ((i + 1) * 4 + 2) / 3);
         for (int j = startBin; j < endBin; j++) {
             maskCurve[j] += this->spreadTable[baseIdx + j] * magnitude;
         }
     }
+
+    // for ultrasonic frequencies, skip the O(n^2) spread calculation and just copy the magnitude
+    for (int i = this->numPsyBins; i < this->size / 2 + 1; i++) {
+        float magnitude;
+        if (i == this->size / 2) {
+            magnitude = std::abs(spectrum[1]);
+        } else {
+            // although the negative frequencies are omitted because they are redundant,
+            // the magnitude of the positive frequencies are not doubled.
+            // Multiply the magnitude by 2 to simulate adding up the + and - frequencies.
+            magnitude = abs(std::complex<float>(spectrum[2 * i], spectrum[2 * i + 1])) * 2;
+        }
+        maskCurve[i] = magnitude;
+    }
+
     for (int i = 0; i < this->size / 2 + 1; i++) {
         maskCurve[i] = maskCurve[i] / this->marginCurve[i];
     }
