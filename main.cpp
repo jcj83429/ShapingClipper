@@ -152,8 +152,10 @@ int main(int argc, char* argv[])
 	printf("%d ch, %d Hz, %d Bps\n", channels, sampleRate, bytesPerSample);
 
 	std::vector<ShapingClipper*> clippers;
-	for(int i = 0; i < channels; i++)
-		clippers.push_back(new ShapingClipper(sampleRate, 256, fullScale*clipLevel));
+	int fftSize = sampleRate <= 50000 ? 256 : sampleRate <= 100000 ? 512 : 1024;
+	for(int i = 0; i < channels; i++) {
+		clippers.push_back(new ShapingClipper(sampleRate, fftSize, fullScale*clipLevel));
+	}
 	const int feedSize = clippers[0]->getFeedSize();
 
 	std::vector<float*> inChannelBufs;
