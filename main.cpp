@@ -126,13 +126,19 @@ void writeSamples(FILE* outFile, std::vector<float*> outChannelBufs, int channel
 int main(int argc, char* argv[])
 {
     if(argc < 4){
-      printf("Usage: %s <infile.wav> <outfile.wav> <clip level (0.0..1.0)>", argv[0]);
+      printf("Usage: %s <infile.wav> <outfile.wav> <clip level (0.0..1.0)> [adaptive distortion (0.0..1.0)] [iterations (0..20)]", argv[0]);
       return 1;
     }
 
 	FILE* inFile = fopen(argv[1], "rb");
 	FILE* outFile = fopen(argv[2], "wb");
 	float clipLevel = atof(argv[3]);
+	float adaptiveDistortion = 1.0;
+	if(argc >= 5)
+		adaptiveDistortion = atof(argv[4]);
+	int iterations = 6;
+	if(argc >= 6)
+		iterations = atoi(argv[5]);
 
 	if(inFile == NULL)
 		die("cannot open input file");
@@ -155,6 +161,8 @@ int main(int argc, char* argv[])
 	int fftSize = sampleRate <= 50000 ? 256 : sampleRate <= 100000 ? 512 : 1024;
 	for(int i = 0; i < channels; i++) {
 		clippers.push_back(new ShapingClipper(sampleRate, fftSize, fullScale*clipLevel));
+		clippers[i]->setAdaptiveDistortionStrength(adaptiveDistortion);
+		clippers[i]->setIterations(iterations);
 	}
 	const int feedSize = clippers[0]->getFeedSize();
 
