@@ -73,6 +73,14 @@ class ShapingClipper
   std::vector<float> inFrame, outDistFrame, marginCurve, window, invWindow, spreadTable;
 
   /**
+   *  spreadtableIndex: for each bin, which entry in the spread table to use
+   *                    (eacn entry is numPsyBins values)
+   *  spreadTableRange: for each entry in the spread table, what is the range of bins (ie. -2 to +4) that should be used
+   */
+  std::vector<int> spreadTableIndex;
+  std::vector<std::pair<int, int>> spreadTableRange;
+
+  /**
    *  Generate the Hann window and inverse window.
    */
   void generateHannWindow();

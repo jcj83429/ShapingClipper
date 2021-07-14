@@ -1,6 +1,7 @@
 #include "ShapingClipper.h"
 #include <algorithm>
 #include <complex>
+#include <cmath>
 
 ShapingClipper::ShapingClipper(int sampleRate, int fftSize, float clipLevel){
   this->sampleFreq = sampleRate;
@@ -28,7 +29,13 @@ ShapingClipper::ShapingClipper(int sampleRate, int fftSize, float clipLevel){
   this->inFrame.resize(fftSize);
   this->outDistFrame.resize(fftSize);
   this->marginCurve.resize(fftSize/2 + 1);
-  this->spreadTable.resize((int64_t)this->numPsyBins * (int64_t)this->numPsyBins);
+  // normally I use __builtin_ctz for this but the intrinsic is different for
+  // different compilers.
+  // 2 per octave.
+  int spreadTableRows = log2(this->numPsyBins) * 2;
+  this->spreadTable.resize(spreadTableRows * this->numPsyBins);
+  this->spreadTableRange.resize(spreadTableRows);
+  this->spreadTableIndex.resize(this->numPsyBins);
 
   generateMarginCurve();
   generateSpreadTable();
@@ -132,35 +139,66 @@ void ShapingClipper::generateHannWindow() {
 }
 
 void ShapingClipper::generateSpreadTable() {
-    for (int i = 0; i < this->numPsyBins; i++) {
+    // Calculate tent-shape function in log-log scale.
+
+    // As an optimization, only consider bins close to i
+    // This reduces the number of multiplications needed in calculateMaskCurve
+    // The masking contribution at faraway bins is negligeable
+
+    // Another optimization to save memory and speed up the calculation of the
+    // spread table is to calculate and store only 2 spread functions per
+    // octave, and reuse the same spread function for multiple bins.
+    int tableIndex = 0;
+    int bin = 0;
+    int increment = 1;
+    while (bin < this->numPsyBins) {
         float sum = 0;
-        int baseIdx = i * this->numPsyBins;
-        // Calculate tent-shape function in log-log scale.
-        // As an optimization, only consider bins close to i
-        // This reduces the number of multiplications needed in calculateMaskCurve
-        // The masking contribution at faraway bins is negligeable
-        int startBin = i * 3 / 4;
-        int endBin = std::min(this->numPsyBins, ((i + 1) * 4 + 2) / 3);
+        int baseIdx = tableIndex * this->numPsyBins;
+        int startBin = bin * 3 / 4;
+        int endBin = std::min(this->numPsyBins, ((bin + 1) * 4 + 2) / 3);
+
+        //printf("bin %d\n", bin);
         for (int j = startBin; j < endBin; j++) {
             // add 0.5 so i=0 doesn't get log(0)
-            float relIdxLog = std::abs(log((j + 0.5) / (i + 0.5)));
+            float relIdxLog = std::abs(log((j + 0.5) / (bin + 0.5)));
             float value;
-            if (j >= i) {
+            if (j >= bin) {
                 // mask up
                 value = exp(-relIdxLog * 40);
             } else {
                 // mask down
                 value = exp(-relIdxLog * 80);
             }
+            // the spreading function is centred in the row
             sum += value;
-            this->spreadTable[baseIdx + j] = value;
+            this->spreadTable[baseIdx + this->numPsyBins / 2 + j - bin] = value;
         }
         // now normalize it
         for (int j = startBin; j < endBin; j++) {
-            this->spreadTable[baseIdx + j] /= sum;
-            //printf("%f ", spreadingFunction[baseIdx + j]);
+            this->spreadTable[baseIdx + this->numPsyBins / 2 + j - bin] /= sum;
+            //printf("%f ", this->spreadTable[baseIdx + this->numPsyBins / 2 + j - bin]);
         }
         //printf("\n\n");
+
+        this->spreadTableRange[tableIndex] = std::make_pair(startBin - bin, endBin - bin);
+
+        int nextBin;
+        if (bin <= 1) {
+            nextBin = bin + 1;
+        } else {
+            if ((bin & (bin - 1)) == 0) {
+                increment = bin / 2;
+            }
+            nextBin = bin + increment;
+        }
+
+        // set bins between "bin" and "nextBin" to use this tableIndex
+        for (int i = bin; i < nextBin; i++) {
+            this->spreadTableIndex[i] = tableIndex;
+        }
+
+        bin = nextBin;
+        tableIndex++;
     }
 }
 
@@ -227,14 +265,13 @@ void ShapingClipper::calculateMaskCurve(const float* spectrum, float* maskCurve)
             // Multiply the magnitude by 2 to simulate adding up the + and - frequencies.
             magnitude = abs(std::complex<float>(spectrum[2 * i], spectrum[2 * i + 1])) * 2;
         }
-        int baseIdx = i * this->numPsyBins;
-        // As an optimization, only consider bins close to i
-        // This reduces the number of multiplications needed in calculateMaskCurve
-        // The masking contribution at faraway bins is negligeable
-        int startBin = i * 3 / 4;
-        int endBin = std::min(this->numPsyBins, ((i + 1) * 4 + 2) / 3);
+        int tableIdx = this->spreadTableIndex[i];
+        std::pair<int, int> range = this->spreadTableRange[tableIdx];
+        int baseIdx = tableIdx * this->numPsyBins;
+        int startBin = std::max(0, i + range.first);
+        int endBin = std::min(this->numPsyBins, i + range.second);
         for (int j = startBin; j < endBin; j++) {
-            maskCurve[j] += this->spreadTable[baseIdx + j] * magnitude;
+            maskCurve[j] += this->spreadTable[baseIdx + this->numPsyBins / 2 + j - i] * magnitude;
         }
     }
 
