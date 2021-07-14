@@ -37,7 +37,10 @@ ShapingClipper::ShapingClipper(int sampleRate, int fftSize, float clipLevel){
   this->spreadTableRange.resize(spreadTableRows);
   this->spreadTableIndex.resize(this->numPsyBins);
 
-  generateMarginCurve();
+  // default curve
+  int points[][2] = { {0,-10}, {80,-10}, {200,10}, {1000,20}, {4000,20}, {8000,15}, {16000,5}, {20000,-10} };
+  int numPoints = 8;
+  setMarginCurve(points, numPoints);
   generateSpreadTable();
 }
 
@@ -202,11 +205,7 @@ void ShapingClipper::generateSpreadTable() {
     }
 }
 
-void ShapingClipper::generateMarginCurve(){
-  // the normal curve trashes frequencies above 16khz (because I can't hear it...but some people might)
-  int points[][2] = { {0,-10}, {80,-10}, {200,10}, {1000,20}, {4000,20}, {8000,15}, {16000,5}, {20000,-10} }; //normal
-
-  int numPoints = 8;
+void ShapingClipper::setMarginCurve(int points[][2], int numPoints){
   this->marginCurve[0] = points[0][1];
   
   int j = 0;

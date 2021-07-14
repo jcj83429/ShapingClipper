@@ -52,6 +52,14 @@ class ShapingClipper
    */
   void setAdaptiveDistortionStrength(float strength);
 
+  /**
+   *  Sets the marginCurve from a list of (Hz, dB) tuples.
+   *  The curve is linearly interpolated between the points
+   *  marginCurve represents the minimum ratio between
+   *  the clean input and the clipping distortion at each frequency
+   */
+  void setMarginCurve(int points[][2], int numPoints);
+
  private:
   int size;
   int overlap;
@@ -89,13 +97,6 @@ class ShapingClipper
    *  Generate the spreadTable used by calculateMaskCurve
    */
   void generateSpreadTable();
-
-  /**
-   *  Generates a basic psychoacoustic curve.
-   *  marginCurve represents the minimum ratio between
-   *  the clean input and the clipping distortion at each frequency
-   */
-  void generateMarginCurve();
 
   /**
    *  Applies the window to the inFrame and store the result in the outFrame
