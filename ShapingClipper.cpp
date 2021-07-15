@@ -118,7 +118,7 @@ void ShapingClipper::feed(const float* inSamples, float* outSamples, bool diffOn
     float maskCurveShift = std::max<float>(peak, 1.122); // 1.122 is 1dB
     maskCurveShift = 1.0 + (maskCurveShift - 1.0) * this->adaptiveDistortionStrength;
 
-    if(totalMarginShift && peak > 1.0 && i < this->iterations - 1) {
+    if(totalMarginShift && peak > 1.01 && i < this->iterations - 1) {
       *totalMarginShift *= maskCurveShift;
     }
 
