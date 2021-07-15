@@ -68,7 +68,7 @@ void ShapingClipper::setAdaptiveDistortionStrength(float strength) {
   this->adaptiveDistortionStrength = strength;
 }
 
-void ShapingClipper::feed(const float* inSamples, float* outSamples, bool diffOnly){
+void ShapingClipper::feed(const float* inSamples, float* outSamples, bool diffOnly, float *totalMarginShift){
   //shift in/out buffers
   for(int i = 0; i < this->size - this->overlap; i++){
     this->inFrame[i] = this->inFrame[i + this->overlap];
@@ -93,6 +93,9 @@ void ShapingClipper::feed(const float* inSamples, float* outSamples, bool diffOn
   for(int i=0; i<this->size; i++)
     clippingDelta[i] = 0;
 
+  if(totalMarginShift) {
+    *totalMarginShift = 1.0;
+  }
 
   //repeat clipping process a few times to get more clipping
   for(int i = 0; i < this->iterations; i++){
@@ -114,6 +117,10 @@ void ShapingClipper::feed(const float* inSamples, float* outSamples, bool diffOn
 
     float maskCurveShift = std::max<float>(peak, 1.122); // 1.122 is 1dB
     maskCurveShift = 1.0 + (maskCurveShift - 1.0) * this->adaptiveDistortionStrength;
+
+    if(totalMarginShift && peak > 1.0 && i < this->iterations - 1) {
+      *totalMarginShift *= maskCurveShift;
+    }
 
     //be less strict in the next iteration
     for(int i = 0; i < this->size / 2 + 1; i++)

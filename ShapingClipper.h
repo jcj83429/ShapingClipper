@@ -21,8 +21,9 @@ class ShapingClipper
    *  Put fftSize/4 samples in inSamples and get fftSize/4 samples out in
    *  outSamples.
    *  The output is delayed by fftSize*3/4 samples.
+   *  totalMarginShift is an optional parameter that can be used to get the total margin adjustment in the frame
    */
-  void feed(const float* inSamples, float* outSamples, bool diffOnly=false);
+  void feed(const float* inSamples, float* outSamples, bool diffOnly=false, float *totalMarginShift=NULL);
 
   /**
    *  Returns fftSize*3/4
@@ -55,6 +56,7 @@ class ShapingClipper
   /**
    *  Sets the marginCurve from a list of (Hz, dB) tuples.
    *  The curve is linearly interpolated between the points
+   *  The first point must be at 0Hz.
    *  marginCurve represents the minimum ratio between
    *  the clean input and the clipping distortion at each frequency
    */
