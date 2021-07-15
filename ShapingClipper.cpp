@@ -38,8 +38,8 @@ ShapingClipper::ShapingClipper(int sampleRate, int fftSize, float clipLevel){
   this->spreadTableIndex.resize(this->numPsyBins);
 
   // default curve
-  int points[][2] = { {0,-10}, {80,-10}, {200,10}, {1000,20}, {4000,20}, {8000,15}, {16000,5}, {20000,-10} };
-  int numPoints = 8;
+  int points[][2] = { {0,14}, {125,14}, {250,16}, {500,18}, {1000,20}, {2000,20}, {4000,20}, {8000,15}, {16000,5}, {20000,-10} };
+  int numPoints = 10;
   setMarginCurve(points, numPoints);
   generateSpreadTable();
 }
