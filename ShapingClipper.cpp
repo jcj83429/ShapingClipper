@@ -89,6 +89,14 @@ void ShapingClipper::feed(const float* inSamples, float* outSamples, bool diffOn
   pffft_transform_ordered(this->pffft, windowedFrame, spectrumBuf, NULL, PFFFT_FORWARD);
   calculateMaskCurve(spectrumBuf, maskCurve);
 
+  // It would be easier to calculate the peak from the unwindowed input.
+  // This is just for consistency with the clipped peak calculateion
+  // because the invWindow zeros out samples where the window value is small.
+  float origPeak = 0;
+  for(int i=0; i<this->size; i++)
+    origPeak = std::max<float>(origPeak, std::abs(windowedFrame[i] * invWindow[i]));
+  origPeak /= this->clipLevel;
+
   //clear clippingDelta
   for(int i=0; i<this->size; i++)
     clippingDelta[i] = 0;
@@ -115,7 +123,25 @@ void ShapingClipper::feed(const float* inSamples, float* outSamples, bool diffOn
       peak = std::max<float>(peak, std::abs((windowedFrame[i] + clippingDelta[i]) * invWindow[i]));
     peak /= this->clipLevel;
 
-    float maskCurveShift = std::max<float>(peak, 1.122); // 1.122 is 1dB
+    float maskCurveShift = 1.122; // 1.122 is 1dB
+    if(origPeak > 1.0 && peak > 1.0) {
+      float diffAchieved = origPeak - peak;
+      if(i + 1 < this->iterations - this->iterations / 3 && diffAchieved > 0) {
+        float diffNeeded = origPeak - 1.0;
+        float diffRatio = diffNeeded / diffAchieved;
+        // If a good amount of peak reduction was already achieved,
+        // don't shift the maskCurve by the full peak value
+        // On the other hand, if only a little peak reduction was achieved,
+        // don't shift the maskCurve by the enormous diffRatio.
+        diffRatio = std::min<float>(diffRatio, peak);
+        maskCurveShift = std::max<float>(maskCurveShift, diffRatio);
+      } else {
+        // If the peak got higher than the input or we are in the last 1/3 rounds,
+        // go back to the heavy-handed peak heuristic.
+        maskCurveShift = std::max<float>(maskCurveShift, peak);
+      }
+    }
+
     maskCurveShift = 1.0 + (maskCurveShift - 1.0) * this->adaptiveDistortionStrength;
 
     if(totalMarginShift && peak > 1.01 && i < this->iterations - 1) {
