@@ -248,7 +248,8 @@ void shaping_clipper::set_margin_curve(int points[][2], int num_points) {
     for (int i = 0; i < num_points - 1; i++) {
         while (j < this->size / 2 + 1 && j * this->sample_rate / this->size < points[i + 1][0]) {
             // linearly interpolate between points
-            margin_curve[j] = points[i][1] + (j - points[i][0] * this->size / this->sample_rate) * (points[i + 1][1] - points[i][1]) / ((points[i + 1][0] - points[i][0]) * this->size / this->sample_rate);
+            int binHz = j * this->sample_rate / this->size;
+            margin_curve[j] = points[i][1] + (binHz - points[i][0]) * (points[i + 1][1] - points[i][1]) / (points[i + 1][0] - points[i][0]);
             j++;
         }
     }
