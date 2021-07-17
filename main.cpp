@@ -4,7 +4,7 @@
 #include <vector>
 #include <cstdarg>
 #include <cstring>
-#include "ShapingClipper.h"
+#include "shaping_clipper.h"
 
 struct WaveFmt{
 	uint8_t audio_format[2];

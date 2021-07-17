@@ -12,4 +12,4 @@ if("${CMAKE_CXX_COMPILER_ID}" STREQUAL "Clang")
     endif()
 endif()
 
-add_executable(main main.cpp ShapingClipper.h ShapingClipper.cpp pffft.h pffft.c)
+add_executable(main main.cpp shaping_clipper.h shaping_clipper.cpp pffft.h pffft.c)

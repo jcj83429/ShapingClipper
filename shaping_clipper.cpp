@@ -1,4 +1,4 @@
-#include "ShapingClipper.h"
+#include "shaping_clipper.h"
 #include <algorithm>
 #include <complex>
 #include <cmath>
