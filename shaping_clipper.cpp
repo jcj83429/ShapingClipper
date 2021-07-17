@@ -93,6 +93,7 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
         orig_peak = std::max<float>(orig_peak, std::abs(windowed_frame[i] * inv_window[i]));
     }
     orig_peak /= this->clip_level;
+    peak = orig_peak;
 
     // clear clipping_delta
     for (int i = 0; i < this->size; i++) {
@@ -106,7 +107,13 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
     // repeat clipping-filtering process a few times to control both the peaks and the spectrum
     for (int i = 0; i < this->iterations; i++) {
         // The last 1/3 of rounds have boosted delta to help reach the peak target faster
-        float delta_boost = i >= this->iterations - this->iterations / 3 ? 2.0 : 1.0;
+        float delta_boost = 1.0;
+        if (i >= this->iterations - this->iterations / 3) {
+	  // boosting the delta when largs peaks are still present is dangerous
+	  if (peak < 2.0) {
+	    delta_boost = 2.0;
+	  }
+	}
         clip_to_window(windowed_frame, clipping_delta, delta_boost);
 
         pffft_transform_ordered(this->pffft, clipping_delta, spectrum_buf, NULL, PFFFT_FORWARD);
