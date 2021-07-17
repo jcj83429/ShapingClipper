@@ -157,14 +157,14 @@ int main(int argc, char* argv[])
 	int32_t fullScale = 1 << (fmt.bits_per_sample[0] - 1);
 	printf("%d ch, %d Hz, %d Bps\n", channels, sampleRate, bytesPerSample);
 
-	std::vector<ShapingClipper*> clippers;
+	std::vector<shaping_clipper*> clippers;
 	int fftSize = sampleRate <= 50000 ? 256 : sampleRate <= 100000 ? 512 : 1024;
 	for(int i = 0; i < channels; i++) {
-		clippers.push_back(new ShapingClipper(sampleRate, fftSize, fullScale*clipLevel));
-		clippers[i]->setAdaptiveDistortionStrength(adaptiveDistortion);
-		clippers[i]->setIterations(iterations);
+		clippers.push_back(new shaping_clipper(sampleRate, fftSize, fullScale*clipLevel));
+		clippers[i]->set_adaptive_distortion_strength(adaptiveDistortion);
+		clippers[i]->set_iterations(iterations);
 	}
-	const int feedSize = clippers[0]->getFeedSize();
+	const int feedSize = clippers[0]->get_feed_size();
 
 	std::vector<float*> inChannelBufs;
 	std::vector<float*> outChannelBufs;
