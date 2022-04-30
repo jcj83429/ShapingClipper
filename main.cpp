@@ -163,6 +163,7 @@ int main(int argc, char* argv[])
 		clippers.push_back(new shaping_clipper(sampleRate, fftSize, fullScale*clipLevel));
 		clippers[i]->set_adaptive_distortion_strength(adaptiveDistortion);
 		clippers[i]->set_iterations(iterations);
+		clippers[i]->set_oversample(1);
 	}
 	const int feedSize = clippers[0]->get_feed_size();
 

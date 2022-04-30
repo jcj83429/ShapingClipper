@@ -14,7 +14,7 @@ public:
      *  fftSize should be a multiple of 4.
      *  clip_level means symmetric clipping from -clip_level to +clip_level
      */
-    shaping_clipper(int sample_rate, int fft_size, float clip_level = 16384);
+    shaping_clipper(int sample_rate, int fft_size, float clip_level = 16384, int max_oversample = 4);
     ~shaping_clipper();
 
     /**
@@ -56,11 +56,16 @@ public:
      */
     void set_margin_curve(int points[][2], int num_points);
 
+    void set_oversample(int oversample);
+
 private:
     int size;
+    int max_oversample;
+    int oversample;
     int overlap;
     int num_psy_bins;
     PFFFT_Setup* pffft;
+    PFFFT_Setup* pffft_oversampled;
     float sample_rate;
     float clip_level;
     float iterations;
@@ -102,6 +107,7 @@ private:
     /**
      *  Applies the window to the in_frame and store the result in the out_frame
      *  If add_to_out_frame is true, the results is added to the out_frame instead
+     *  Always operates on non-oversampled samples.
      */
     void apply_window(const float* in_frame, float* out_frame, const bool add_to_out_frame = false);
 
@@ -111,7 +117,8 @@ private:
      *  The existing values in clipping_delta is applied to the windowed_frame
      *  to get the effective sample values, taking previous clipping iterations
      *  into account.
-     *  Should only be used with windowed input
+     *  Should only be used with windowed input.
+     *  Operates on oversampled samples if oversampling is enabled.
      */
     void clip_to_window(const float* windowed_frame, float* clipping_delta, float delta_boost = 1.0);
 
