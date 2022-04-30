@@ -42,7 +42,7 @@ shaping_clipper::shaping_clipper(int sample_rate, int fft_size, float clip_level
     this->spread_table_index.resize(this->num_psy_bins);
 
     // default curve
-    int points[][2] = { {0,14}, {125,14}, {250,16}, {500,18}, {1000,20}, {2000,20}, {4000,20}, {8000,15}, {16000,5}, {20000,-10} };
+    int points[][2] = { {0,14}, {125,14}, {250,16}, {500,18}, {1000,20}, {2000,20}, {4000,20}, {8000,17}, {16000,14}, {20000,-10} };
     int num_points = 10;
     set_margin_curve(points, num_points);
     generate_spread_table();
