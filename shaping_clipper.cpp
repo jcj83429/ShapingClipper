@@ -151,11 +151,11 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
         // The last 1/3 of rounds have boosted delta to help reach the peak target faster
         float delta_boost = 1.0;
         if (i >= this->iterations - this->iterations / 3) {
-	        // boosting the delta when largs peaks are still present is dangerous
-	        if (peak < 2.0) {
-	            delta_boost = 2.0;
-	        }
-	    }
+            // boosting the delta when largs peaks are still present is dangerous
+            if (peak < 2.0) {
+                delta_boost = 2.0;
+            }
+        }
         clip_to_window(windowed_frame, clipping_delta, delta_boost);
 
         pffft_transform_ordered(clipping_pffft, clipping_delta, spectrum_buf, NULL, PFFFT_FORWARD);
@@ -228,9 +228,28 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
     apply_window(clipping_delta, this->out_dist_frame.data(), true);
 
     for (int i = 0; i < this->overlap; i++) {
-        out_samples[i] = this->out_dist_frame[i] / 1.5;
         // 4 times overlap with squared hanning window results in 1.5 time increase in amplitude
-        if (!diff_only) {
+        out_samples[i] = this->out_dist_frame[i] / 1.5;
+    }
+
+    if (this->oversample > 1) {
+        // When oversampling is active, the clipping delta can be non-zero even if all the samples in the frame are well below the threshold.
+        // This is likely due to the aliasing introduced when windowing near-nyquist frequencies.
+        // For purity, detect and remove these unwanted changes to the input signal.
+        // The effect on peak control is < 0.1% or -60dB. Oversampling is not exact anyway.
+        float max_out_diff = 0;
+        for (int i = 0; i < this->overlap; i++) {
+            max_out_diff = std::max(max_out_diff, std::abs(out_samples[i]));
+        }
+        if (max_out_diff < this->clip_level * 0.001) {
+            for (int i = 0; i < this->overlap; i++) {
+                out_samples[i] = 0;
+            }
+        }
+    }
+
+    if (!diff_only) {
+        for (int i = 0; i < this->overlap; i++) {
             out_samples[i] += this->in_frame[i];
         }
     }
