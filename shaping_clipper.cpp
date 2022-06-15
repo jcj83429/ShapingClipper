@@ -104,8 +104,16 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
     float* mask_curve = (float*)alloca(sizeof(float) * (this->size / 2 + 1));
 
     apply_window(this->in_frame.data(), windowed_frame);
+    for (int i = 0; i < this->size; i++) {
+        windowed_frame[i] *= atten;
+    }
     pffft_transform_ordered(this->pffft, windowed_frame, spectrum_buf, NULL, PFFFT_FORWARD);
     calculate_mask_curve(spectrum_buf, mask_curve);
+
+    float orig_hf = 0;
+    for (int i = this->size / 4; i < this->size; i++) {
+        orig_hf += spectrum_buf[i] * spectrum_buf[i];
+    }
 
     int clipping_samples = this->size * this->oversample;
     int window_stride = this->max_oversample / this->oversample;
@@ -224,6 +232,25 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
         }
     }
 
+    apply_window(this->in_frame.data(), windowed_frame);
+    for (int i = 0; i < this->size; i++) {
+        windowed_frame[i] *= atten;
+    }
+    for (int i = 0; i < this->size; i++) {
+        windowed_frame[i] += clipping_delta[i];
+    }
+    pffft_transform_ordered(this->pffft, windowed_frame, spectrum_buf, NULL, PFFFT_FORWARD);
+
+    float final_hf = 0;
+    for (int i = this->size / 4; i < this->size; i++) {
+        final_hf += spectrum_buf[i] * spectrum_buf[i];
+    }
+
+    apply_window(this->in_frame.data(), windowed_frame);
+    for (int i = 0; i < this->size; i++) {
+        clipping_delta[i] -= windowed_frame[i] * (1.0 - atten);
+    }
+
     // do overlap & add
     apply_window(clipping_delta, this->out_dist_frame.data(), true);
 
@@ -253,6 +280,17 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
             out_samples[i] += this->in_frame[i];
         }
     }
+
+    float hf_atten = (sqrt(final_hf + 0.000001) / sqrt(orig_hf + 0.000001));
+    atten *= sqrt(sqrt(hf_atten));
+    atten *= 1.02;
+    atten = std::min<float>(atten, 1.0);
+
+    /*
+    for (int i = 0; i < this->overlap; i++) {
+        out_samples[i] = hf_atten;
+    }
+    */
 }
 
 void shaping_clipper::generate_hann_window() {

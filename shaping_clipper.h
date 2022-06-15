@@ -70,6 +70,7 @@ private:
     float clip_level;
     float iterations;
     float adaptive_distortion_strength;
+    float atten = 1.0;
 
     /**
      *  in_frame: unmodified input audio
