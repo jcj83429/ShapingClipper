@@ -102,17 +102,27 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
     float* clipping_delta = (float*)alloca(sizeof(float) * this->size * this->oversample);
     float* spectrum_buf = (float*)alloca(sizeof(float) * this->size * this->oversample);
     float* mask_curve = (float*)alloca(sizeof(float) * (this->size / 2 + 1));
+    float* mask_curve2 = (float*)alloca(sizeof(float) * (this->size / 2 + 1));
 
     apply_window(this->in_frame.data(), windowed_frame);
-    for (int i = 0; i < this->size; i++) {
-        windowed_frame[i] *= atten;
-    }
     pffft_transform_ordered(this->pffft, windowed_frame, spectrum_buf, NULL, PFFFT_FORWARD);
     calculate_mask_curve(spectrum_buf, mask_curve);
-
     float orig_hf = 0;
     for (int i = this->size / 4; i < this->size; i++) {
         orig_hf += spectrum_buf[i] * spectrum_buf[i];
+    }
+    orig_hf *= atten * atten;
+    for (int i = 0; i < this->size / 8; i++) {
+        mask_curve2[i] = 0;
+    }
+    mask_curve2[this->size / 2] = 0;
+    for (int i = this->size / 8; i < this->size / 2; i++) {
+        float real = spectrum_buf[i * 2];
+        float imag = spectrum_buf[i * 2 + 1];
+        // although the negative frequencies are omitted because they are redundant,
+        // the magnitude of the positive frequencies are not doubled.
+        // Multiply the magnitude by 2 to simulate adding up the + and - frequencies.
+        mask_curve2[i] = abs(std::complex<float>(real, imag)) * 2 * (1.0 - atten);
     }
 
     int clipping_samples = this->size * this->oversample;
@@ -128,13 +138,34 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
             spectrum_buf[i] = 0;
         }
         pffft_transform_ordered(this->pffft_oversampled, spectrum_buf, windowed_frame, NULL, PFFFT_BACKWARD);
+        for (int i = 0; i < this->size / 4; i++) {
+            spectrum_buf[i] = 0.0;
+        }
+        for (int i = this->size / 4; i < this->size; i++) {
+            spectrum_buf[i] *= atten - 1.0;
+        }
+        spectrum_buf[this->size] = 0;
+        pffft_transform_ordered(this->pffft_oversampled, spectrum_buf, clipping_delta, NULL, PFFFT_BACKWARD);
         float fft_ifft_scale = this->size;
         for (int i = 0; i < clipping_samples; i++) {
             windowed_frame[i] /= fft_ifft_scale;
+            clipping_delta[i] /= fft_ifft_scale;
         }
 
         for (int i = 0; i < this->size / 2 + 1; i++) {
             mask_curve[i] *= this->oversample;
+            mask_curve2[i] *= this->oversample;
+        }
+    } else {
+        for (int i = 0; i < this->size / 4; i++) {
+            spectrum_buf[i] = 0.0;
+        }
+        for (int i = this->size / 4; i < this->size; i++) {
+            spectrum_buf[i] *= atten - 1.0;
+        }
+        pffft_transform_ordered(this->pffft, spectrum_buf, clipping_delta, NULL, PFFFT_BACKWARD);
+        for (int i = 0; i < this->size; i++) {
+            clipping_delta[i] /= this->size;
         }
     }
 
@@ -144,11 +175,6 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
     }
     orig_peak /= this->clip_level;
     peak = orig_peak;
-
-    // clear clipping_delta
-    for (int i = 0; i < clipping_samples; i++) {
-        clipping_delta[i] = 0;
-    }
 
     if (total_margin_shift) {
         *total_margin_shift = 1.0;
@@ -164,6 +190,11 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
                 delta_boost = 2.0;
             }
         }
+
+        for (int i = 0; i < this->size / 2 + 1; i++) {
+            mask_curve2[i] = std::max(mask_curve[i], mask_curve2[i]);
+        }
+
         clip_to_window(windowed_frame, clipping_delta, delta_boost);
 
         pffft_transform_ordered(clipping_pffft, clipping_delta, spectrum_buf, NULL, PFFFT_FORWARD);
@@ -177,7 +208,7 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
             }
         }
 
-        limit_clip_spectrum(spectrum_buf, mask_curve);
+        limit_clip_spectrum(spectrum_buf, mask_curve2);
 
         pffft_transform_ordered(clipping_pffft, spectrum_buf, clipping_delta, NULL, PFFFT_BACKWARD);
         // see pffft.h
@@ -229,13 +260,10 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
         // We already zeroed out all frequency bins above the base nyquist rate so we can simply drop samples here.
         for (int i = 0; i < this->size; i++) {
             clipping_delta[i] = clipping_delta[i * this->oversample];
+            windowed_frame[i] = windowed_frame[i * this->oversample];
         }
     }
 
-    apply_window(this->in_frame.data(), windowed_frame);
-    for (int i = 0; i < this->size; i++) {
-        windowed_frame[i] *= atten;
-    }
     for (int i = 0; i < this->size; i++) {
         windowed_frame[i] += clipping_delta[i];
     }
@@ -244,11 +272,6 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
     float final_hf = 0;
     for (int i = this->size / 4; i < this->size; i++) {
         final_hf += spectrum_buf[i] * spectrum_buf[i];
-    }
-
-    apply_window(this->in_frame.data(), windowed_frame);
-    for (int i = 0; i < this->size; i++) {
-        clipping_delta[i] -= windowed_frame[i] * (1.0 - atten);
     }
 
     // do overlap & add
@@ -281,16 +304,10 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
         }
     }
 
-    float hf_atten = (sqrt(final_hf + 0.000001) / sqrt(orig_hf + 0.000001));
-    atten *= sqrt(sqrt(hf_atten));
-    atten *= 1.02;
+    float hf_atten = std::min(1.0, (sqrt(final_hf) + 0.000001) / (sqrt(orig_hf) + 0.000001));
+    atten *= hf_atten;
+    atten *= 1.01;
     atten = std::min<float>(atten, 1.0);
-
-    /*
-    for (int i = 0; i < this->overlap; i++) {
-        out_samples[i] = hf_atten;
-    }
-    */
 }
 
 void shaping_clipper::generate_hann_window() {
