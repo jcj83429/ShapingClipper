@@ -338,6 +338,9 @@ void shaping_clipper::generate_spread_table() {
     int bin = 0;
     int increment = 1;
     while (bin < this->num_psy_bins) {
+        float freq = bin * this->sample_rate / this->size;
+        float slope_up = freq > 8000 ? 8 : freq > 4000 ? 12 : freq > 2000 ? 18 : freq > 1000 ? 30 : 40;
+        float slope_down = freq > 8000 ? 15 : slope_up * 2;
         float sum = 0;
         int base_idx = table_index * this->num_psy_bins;
         int start_bin = bin * 3 / 4;
@@ -349,10 +352,10 @@ void shaping_clipper::generate_spread_table() {
             float value;
             if (j >= bin) {
                 // mask up
-                value = exp(-rel_idx_log * 40);
+                value = exp(-rel_idx_log * slope_up);
             } else {
                 // mask down
-                value = exp(-rel_idx_log * 80);
+                value = exp(-rel_idx_log * slope_down);
             }
             // the spreading function is centred in the row
             sum += value;
