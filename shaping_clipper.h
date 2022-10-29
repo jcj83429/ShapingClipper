@@ -70,7 +70,6 @@ private:
     float clip_level;
     float iterations;
     float adaptive_distortion_strength;
-    float atten = 1.0;
 
     /**
      *  in_frame: unmodified input audio
@@ -79,8 +78,9 @@ private:
      *  window: the Hann window
      *  inv_window: inverse of the Hann window used to calculate the unwindowed peak
      *  spread_table: see generate_spread_table
+     *  bin_gain: gain (0.0 to 1.0) of each frequency bin
      */
-    std::vector<float> in_frame, out_dist_frame, margin_curve, window, inv_window, spread_table;
+    std::vector<float> in_frame, out_dist_frame, margin_curve, window, inv_window, spread_table, bin_gain;
 
     /**
      *  spreadtableIndex: for each bin, which entry in the spread table to use

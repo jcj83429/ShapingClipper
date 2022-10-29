@@ -3,8 +3,6 @@
 #include <complex>
 #include <cmath>
 
-#define HF_DIVIDER 4
-
 shaping_clipper::shaping_clipper(int sample_rate, int fft_size, float clip_level, int max_oversample) {
     this->sample_rate = sample_rate;
     this->size = fft_size;
@@ -35,6 +33,10 @@ shaping_clipper::shaping_clipper(int sample_rate, int fft_size, float clip_level
     this->in_frame.resize(fft_size);
     this->out_dist_frame.resize(fft_size);
     this->margin_curve.resize(fft_size / 2 + 1);
+    this->bin_gain.resize(fft_size / 2 + 1);
+    for (int i = 0; i < fft_size / 2 + 1; i++) {
+        this->bin_gain[i] = 1.0;
+    }
     // normally I use __builtin_ctz for this but the intrinsic is different for
     // different compilers.
     // 2 spread_table entries per octave.
@@ -44,7 +46,7 @@ shaping_clipper::shaping_clipper(int sample_rate, int fft_size, float clip_level
     this->spread_table_index.resize(this->num_psy_bins);
 
     // default curve
-    int points[][2] = { {0,14}, {125,14}, {250,16}, {500,18}, {1000,20}, {2000,20}, {4000,20}, {8000,17}, {16000,14}, {20000,-10} };
+    int points[][2] = { {0,14}, {125,14}, {250,16}, {500,16}, {1000,17}, {2000,17}, {4000,17}, {8000,15}, {16000,14}, {20000,-10} };
     int num_points = 10;
     set_margin_curve(points, num_points);
     generate_spread_table();
@@ -105,26 +107,24 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
     float* spectrum_buf = (float*)alloca(sizeof(float) * this->size * this->oversample);
     float* mask_curve = (float*)alloca(sizeof(float) * (this->size / 2 + 1));
     float* mask_curve2 = (float*)alloca(sizeof(float) * (this->size / 2 + 1));
+    float* bin_level_in = (float*)alloca(sizeof(float) * (this->size / 2 + 1));
 
     apply_window(this->in_frame.data(), windowed_frame);
     pffft_transform_ordered(this->pffft, windowed_frame, spectrum_buf, NULL, PFFFT_FORWARD);
     calculate_mask_curve(spectrum_buf, mask_curve);
-    float orig_hf = 0;
-    for (int i = this->size / HF_DIVIDER; i < this->size * 3 / 4; i++) {
-        orig_hf += spectrum_buf[i] * spectrum_buf[i];
+    // reuse the spreading from the mask curve for the bin_level_in
+    for (int i = 1; i < this->num_psy_bins; i++) {
+        bin_level_in[i] = mask_curve[i] * bin_gain[i];
     }
-    orig_hf *= atten * atten;
-    for (int i = 0; i < this->size / 2 / HF_DIVIDER; i++) {
-        mask_curve2[i] = 0;
-    }
+    mask_curve2[0] = 0;
     mask_curve2[this->size / 2] = 0;
-    for (int i = this->size / 2 / HF_DIVIDER; i < this->size / 2; i++) {
+    for (int i = 1; i < this->size / 2; i++) {
         float real = spectrum_buf[i * 2];
         float imag = spectrum_buf[i * 2 + 1];
         // although the negative frequencies are omitted because they are redundant,
         // the magnitude of the positive frequencies are not doubled.
         // Multiply the magnitude by 2 to simulate adding up the + and - frequencies.
-        mask_curve2[i] = abs(std::complex<float>(real, imag)) * 2 * (1.0 - atten);
+        mask_curve2[i] = abs(std::complex<float>(real, imag)) * 2 * (1.0 - bin_gain[i]);
     }
 
     int clipping_samples = this->size * this->oversample;
@@ -140,11 +140,11 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
             spectrum_buf[i] = 0;
         }
         pffft_transform_ordered(this->pffft_oversampled, spectrum_buf, windowed_frame, NULL, PFFFT_BACKWARD);
-        for (int i = 0; i < this->size / HF_DIVIDER; i++) {
+        for (int i = 0; i < 2; i++) {
             spectrum_buf[i] = 0.0;
         }
-        for (int i = this->size / HF_DIVIDER; i < this->size; i++) {
-            spectrum_buf[i] *= atten - 1.0;
+        for (int i = 2; i < this->size; i++) {
+            spectrum_buf[i] *= bin_gain[i/2] - 1.0;
         }
         spectrum_buf[this->size] = 0;
         pffft_transform_ordered(this->pffft_oversampled, spectrum_buf, clipping_delta, NULL, PFFFT_BACKWARD);
@@ -159,11 +159,11 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
             mask_curve2[i] *= this->oversample;
         }
     } else {
-        for (int i = 0; i < this->size / HF_DIVIDER; i++) {
+        for (int i = 0; i < 2; i++) {
             spectrum_buf[i] = 0.0;
         }
-        for (int i = this->size / HF_DIVIDER; i < this->size; i++) {
-            spectrum_buf[i] *= atten - 1.0;
+        for (int i = 2; i < this->size; i++) {
+            spectrum_buf[i] *= bin_gain[i/2] - 1.0;
         }
         pffft_transform_ordered(this->pffft, spectrum_buf, clipping_delta, NULL, PFFFT_BACKWARD);
         for (int i = 0; i < this->size; i++) {
@@ -270,10 +270,15 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
         windowed_frame[i] += clipping_delta[i];
     }
     pffft_transform_ordered(this->pffft, windowed_frame, spectrum_buf, NULL, PFFFT_FORWARD);
-
-    float final_hf = 0;
-    for (int i = this->size / HF_DIVIDER; i < this->size * 3 / 4; i++) {
-        final_hf += spectrum_buf[i] * spectrum_buf[i];
+    // reuse the spreading of the mask curve to calculate final bin level
+    calculate_mask_curve(spectrum_buf, mask_curve);
+    for (int i = 0; i < this->num_psy_bins; i++) {
+        float bin_atten = (mask_curve[i] + 0.000001) / (bin_level_in[i] + 0.000001);
+        bin_atten = std::min(bin_atten, 1.0f);
+        bin_atten = std::max(bin_atten, 0.97f);
+        bin_gain[i] *= bin_atten;
+        bin_gain[i] *= 1.007;
+        bin_gain[i] = std::min<float>(bin_gain[i], 1.0);
     }
 
     // do overlap & add
@@ -305,12 +310,6 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
             out_samples[i] += this->in_frame[i];
         }
     }
-
-    float hf_atten = std::min(1.0, (sqrt(final_hf) + 0.000001) / (sqrt(orig_hf) + 0.000001));
-    hf_atten = std::max(hf_atten, 0.95f);
-    atten *= hf_atten;
-    atten *= 1.005;
-    atten = std::min<float>(atten, 1.0);
 }
 
 void shaping_clipper::generate_hann_window() {
