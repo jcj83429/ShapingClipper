@@ -58,6 +58,8 @@ public:
 
     void set_oversample(int oversample);
 
+    void set_compress_speed(float attack_db_per_sec, float release_db_per_sec);
+
 private:
     int size;
     int max_oversample;
@@ -70,6 +72,8 @@ private:
     float clip_level;
     float iterations;
     float adaptive_distortion_strength;
+    float attack_speed;
+    float release_speed;
 
     /**
      *  in_frame: unmodified input audio
