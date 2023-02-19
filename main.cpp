@@ -158,12 +158,16 @@ int main(int argc, char* argv[])
 	printf("%d ch, %d Hz, %d Bps\n", channels, sampleRate, bytesPerSample);
 
 	std::vector<shaping_clipper*> clippers;
+	shaping_clipper_stereo_coupler *stereo_coupler = NULL;
 	int fftSize = sampleRate <= 50000 ? 256 : sampleRate <= 100000 ? 512 : 1024;
 	for(int i = 0; i < channels; i++) {
 		clippers.push_back(new shaping_clipper(sampleRate, fftSize, fullScale*clipLevel));
 		clippers[i]->set_adaptive_distortion_strength(adaptiveDistortion);
 		clippers[i]->set_iterations(iterations);
 		clippers[i]->set_oversample(1);
+	}
+	if (channels == 2) {
+		stereo_coupler = new shaping_clipper_stereo_coupler(clippers[0], clippers[1]);
 	}
 	const int feedSize = clippers[0]->get_feed_size();
 
@@ -189,6 +193,7 @@ int main(int argc, char* argv[])
 		for(int c = 0; c < channels; c++){
 			clippers[c]->feed(inChannelBufs[c], outChannelBufs[c]);
 		}
+		if (stereo_coupler) stereo_coupler->sync_bin_gain();
 
 		if(count < 3){ // due to FFT delay, first 3 output blocks are empty
 			count++;
@@ -206,6 +211,7 @@ int main(int argc, char* argv[])
 		for(int c = 0; c < channels; c++){
 			clippers[c]->feed(inChannelBufs[c], outChannelBufs[c]);
 		}
+		if (stereo_coupler) stereo_coupler->sync_bin_gain();
 		writeSamples(outFile, outChannelBufs, channels, feedSize, bytesPerSample);
 	}
 
@@ -220,6 +226,7 @@ int main(int argc, char* argv[])
 		for(int c = 0; c < channels; c++){
 			clippers[c]->feed(inChannelBufs[c], outChannelBufs[c]);
 		}
+		if (stereo_coupler) stereo_coupler->sync_bin_gain();
 		writeSamples(outFile, outChannelBufs, channels, (samplesRemaining > feedSize ? feedSize : samplesRemaining), bytesPerSample);
 		samplesRemaining -= feedSize;
 	}

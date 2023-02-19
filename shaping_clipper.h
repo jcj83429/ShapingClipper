@@ -7,6 +7,7 @@
 
 class shaping_clipper
 {
+    friend class shaping_clipper_stereo_coupler;
 public:
 
     /**
@@ -138,4 +139,18 @@ private:
      */
     void limit_clip_spectrum(float* clip_spectrum, const float* mask_curve);
 
+};
+
+class shaping_clipper_stereo_coupler
+{
+public:
+    shaping_clipper_stereo_coupler(shaping_clipper *clipper_l, shaping_clipper *clipper_r) {
+        m_clipper_l = clipper_l;
+        m_clipper_r = clipper_r;
+    }
+
+    void sync_bin_gain();
+
+private:
+    shaping_clipper *m_clipper_l, *m_clipper_r;
 };

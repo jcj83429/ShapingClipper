@@ -566,3 +566,16 @@ void shaping_clipper::limit_clip_spectrum(float* clip_spectrum, const float* mas
         }
     }
 }
+
+void shaping_clipper_stereo_coupler::sync_bin_gain() {
+    float max_diff = 1.122;
+    for (int i = 0; i < m_clipper_l->num_psy_bins; i++) {
+        float &gain_l = m_clipper_l->bin_gain[i];
+        float &gain_r = m_clipper_r->bin_gain[i];
+        if (gain_l < gain_r) {
+            gain_r = std::min(gain_l * max_diff, gain_r);
+        } else {
+            gain_l = std::min(gain_r * max_diff, gain_l);
+        }
+    }
+}
