@@ -123,13 +123,13 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
     pffft_transform_ordered(this->pffft, windowed_frame, spectrum_buf, NULL, PFFFT_FORWARD);
 
     calculate_mask_curve(spectrum_buf, mask_curve);
-    // reuse the spreading from the mask curve for the bin_level_in
+    // Reuse the spreading from the mask curve for the bin_level_in.
+    // This is not completely accurate because it's not the same as applying the gain then doing the spreading.
     for (int i = 0; i < this->num_psy_bins; i++) {
         bin_level_in[i] = mask_curve[i] * bin_gain[i];
     }
-    mask_curve2[0] = spectrum_buf[0] * (1.0 - bin_gain[0]);
-    mask_curve2[this->size / 2] = 0;
-    for (int i = 0; i < this->num_psy_bins; i++) {
+    mask_curve2[0] = abs(spectrum_buf[0]) * (1.0 - bin_gain[0]);
+    for (int i = 1; i < this->num_psy_bins; i++) {
         float real = spectrum_buf[i * 2];
         float imag = spectrum_buf[i * 2 + 1];
         // although the negative frequencies are omitted because they are redundant,
@@ -137,6 +137,12 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
         // Multiply the magnitude by 2 to simulate adding up the + and - frequencies.
         mask_curve2[i] = abs(std::complex<float>(real, imag)) * 2 * (1.0 - bin_gain[i]);
     }
+
+    // high sample rates: clear mask_curve2 for ultrasonic frequencies
+    for (int i = this->num_psy_bins; i < this->size / 2 + 1; i++) {
+        mask_curve2[i] = 0;
+    }
+
 
     int clipping_samples = this->size * this->oversample;
     int window_stride = this->max_oversample / this->oversample;
@@ -226,7 +232,24 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
         // forbid all clipping distortion by setting their values back to the attenuation hold values.
         // For bins that are allowed to have more distortion, do distortion control on the clipping
         // distortion on top of the attenuation. Distortion popping in and out can happen otherwise.
-        for (int i = 1; i < this->size / 2; i++) {
+
+        // All these special cases for bin 0 and N are ugly.
+        // I should allocate one more slot in the spectrum_buf and move bin N to the end.
+        // Also, normalize the scaling for bin 0 and N vs the rest so no x2 is needed for middle bins.
+        if (mask_curve[0] < mask_curve2[0]) {
+            spectrum_buf[0] = spectrum_for_atten[0];
+        } else {
+            float atten_real = spectrum_for_atten[0];
+            float atten_mag = abs(atten_real);
+            float remaining_mag = mask_curve2[0] - atten_mag;
+            float clip_real = spectrum_buf[0] - spectrum_for_atten[0];
+            float clip_mag = abs(clip_real);
+            if (clip_mag > remaining_mag) {
+                float scale = remaining_mag / clip_mag;
+                spectrum_buf[0] = atten_real + clip_real * scale;
+            }
+        }
+        for (int i = 1; i < this->num_psy_bins; i++) {
             if (mask_curve[i] < mask_curve2[i]) {
                 spectrum_buf[i * 2] = spectrum_for_atten[i * 2];
                 spectrum_buf[i * 2 + 1] = spectrum_for_atten[i * 2 + 1];
@@ -341,17 +364,22 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
     calculate_mask_curve(spectrum_buf, mask_curve);
     float min_bin_gain = 1.0;
     for (int i = 0; i < this->num_psy_bins; i++) {
-        float bin_atten = (mask_curve[i] + 0.000001) / (bin_level_in[i] + 0.000001);
+        float bin_atten = 1.0;
+        if (bin_level_in[i]) {
+            bin_atten = std::min(1.0f, mask_curve[i] / bin_level_in[i]);
+        }
         float atkspd = attack_speed;
         float relspd = release_speed;
-
         atkspd *= pow(atkspd, 2.0 * i / this->num_psy_bins);
         relspd *= pow(relspd, 2.0 * i / this->num_psy_bins);
 
-        bin_atten = std::min(bin_atten, 1.0f);
-        bin_atten = std::max(bin_atten, atkspd);
-        bin_gain[i] *= bin_atten;
-        if(bin_atten == 1.0) {
+        // Due to the shortcut used to calculate bin_level_in by scaling mask_curve,
+        // there can be small differences between mask_curve and bin_level_in even when there is no attenuation,
+        // so use 0.999 here to ignore the small differences.
+        if (bin_atten < 0.999) {
+            bin_atten = std::max(bin_atten, atkspd);
+            bin_gain[i] *= bin_atten;
+        } else {
             bin_gain[i] *= relspd;
         }
         bin_gain[i] = std::min<float>(bin_gain[i], 1.0);
