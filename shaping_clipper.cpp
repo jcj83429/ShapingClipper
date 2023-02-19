@@ -101,7 +101,7 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
     float* windowed_frame = (float*)alloca(sizeof(float) * this->size * this->oversample);
     float* clipping_delta = (float*)alloca(sizeof(float) * this->size * this->oversample);
     float* spectrum_buf = (float*)alloca(sizeof(float) * this->size * this->oversample);
-    float* mask_curve = (float*)alloca(sizeof(float) * this->size / 2 + 1);
+    float* mask_curve = (float*)alloca(sizeof(float) * (this->size / 2 + 1));
 
     apply_window(this->in_frame.data(), windowed_frame);
     pffft_transform_ordered(this->pffft, windowed_frame, spectrum_buf, NULL, PFFFT_FORWARD);
