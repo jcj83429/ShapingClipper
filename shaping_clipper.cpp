@@ -46,11 +46,11 @@ shaping_clipper::shaping_clipper(int sample_rate, int fft_size, float clip_level
     this->spread_table_index.resize(this->num_psy_bins);
 
     // default curve
-    int points[][2] = { {0,14}, {125,14}, {250,16}, {500,18}, {1000,20}, {2000,20}, {4000,20}, {8000,17}, {16000,14}, {20000,-10} };
+    int points[][2] = { {0,16}, {125,16}, {250,16}, {500,16}, {1000,16}, {2000,16}, {4000,15}, {8000,15}, {16000,15}, {20000,-10} };
     int num_points = 10;
     set_margin_curve(points, num_points);
     generate_spread_table();
-    set_compress_speed(400, 80);
+    set_compress_speed(150, 150);
 }
 
 shaping_clipper::~shaping_clipper() {
@@ -113,12 +113,15 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
     float* windowed_frame = (float*)alloca(sizeof(float) * this->size * this->oversample);
     float* clipping_delta = (float*)alloca(sizeof(float) * this->size * this->oversample);
     float* spectrum_buf = (float*)alloca(sizeof(float) * this->size * this->oversample);
+    float* spectrum_for_atten = (float*)alloca(sizeof(float) * this->size);
     float* mask_curve = (float*)alloca(sizeof(float) * (this->size / 2 + 1));
     float* mask_curve2 = (float*)alloca(sizeof(float) * (this->size / 2 + 1));
     float* bin_level_in = (float*)alloca(sizeof(float) * (this->size / 2 + 1));
 
     apply_window(this->in_frame.data(), windowed_frame);
+
     pffft_transform_ordered(this->pffft, windowed_frame, spectrum_buf, NULL, PFFFT_FORWARD);
+
     calculate_mask_curve(spectrum_buf, mask_curve);
     // reuse the spreading from the mask curve for the bin_level_in
     for (int i = 0; i < this->num_psy_bins; i++) {
@@ -147,36 +150,35 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
         for (int i = this->size + 1; i < this->size * this->oversample; i++) {
             spectrum_buf[i] = 0;
         }
-        pffft_transform_ordered(this->pffft_oversampled, spectrum_buf, windowed_frame, NULL, PFFFT_BACKWARD);
-        // apply bin gain through clipping delta
-        for (int i = 0; i < this->num_psy_bins; i++) {
-            spectrum_buf[i*2] *= bin_gain[i] - 1.0;
-            spectrum_buf[i*2 + 1] *= bin_gain[i] - 1.0;
+        // adjust scaling for oversampling
+        for (int i = 0; i <= this->size; i++) {
+            spectrum_buf[i] *= this->oversample;
         }
-        spectrum_buf[this->size] = 0;
-        pffft_transform_ordered(this->pffft_oversampled, spectrum_buf, clipping_delta, NULL, PFFFT_BACKWARD);
-        float fft_ifft_scale = this->size;
-        for (int i = 0; i < clipping_samples; i++) {
-            windowed_frame[i] /= fft_ifft_scale;
-            clipping_delta[i] /= fft_ifft_scale;
-        }
-
         for (int i = 0; i < this->size / 2 + 1; i++) {
             mask_curve[i] *= this->oversample;
             mask_curve2[i] *= this->oversample;
         }
-    } else {
-        // apply bin gain through clipping delta
-        spectrum_buf[0] *= bin_gain[0] - 1.0;
-        spectrum_buf[1] = 0;
-        for (int i = 1; i < this->num_psy_bins; i++) {
-            spectrum_buf[i * 2] *= bin_gain[i] - 1.0;
-            spectrum_buf[i * 2 + 1] *= bin_gain[i] - 1.0;
+        pffft_transform_ordered(this->pffft_oversampled, spectrum_buf, windowed_frame, NULL, PFFFT_BACKWARD);
+        for (int i = 0; i < clipping_samples; i++) {
+            windowed_frame[i] /= clipping_samples;
         }
-        pffft_transform_ordered(this->pffft, spectrum_buf, clipping_delta, NULL, PFFFT_BACKWARD);
-        for (int i = 0; i < this->size; i++) {
-            clipping_delta[i] /= this->size;
-        }
+    }
+
+    // apply bin gain through clipping delta
+    spectrum_buf[0] *= bin_gain[0] - 1.0;
+    spectrum_buf[1] = 0;
+    for (int i = 1; i < this->num_psy_bins; i++) {
+        spectrum_buf[i * 2] *= bin_gain[i] - 1.0;
+        spectrum_buf[i * 2 + 1] *= bin_gain[i] - 1.0;
+    }
+    // if oversampling is active, zero out bins above audible range. bin_gain doesn't apply there.
+    for (int i = this->num_psy_bins * 2; i < clipping_samples; i++) {
+        spectrum_buf[i] = 0;
+    }
+    memcpy(spectrum_for_atten, spectrum_buf, sizeof(float) * this->size);
+    pffft_transform_ordered(clipping_pffft, spectrum_buf, clipping_delta, NULL, PFFFT_BACKWARD);
+    for (int i = 0; i < clipping_samples; i++) {
+        clipping_delta[i] /= clipping_samples;
     }
 
     float orig_peak = 0;
@@ -219,6 +221,32 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
         }
 
         limit_clip_spectrum(spectrum_buf, mask_curve2);
+
+        // For bins whose allowed clipping distortion is less than the effect of attenuation hold,
+        // forbid all clipping distortion by setting their values back to the attenuation hold values.
+        // For bins that are allowed to have more distortion, do distortion control on the clipping
+        // distortion on top of the attenuation. Distortion popping in and out can happen otherwise.
+        for (int i = 1; i < this->size / 2; i++) {
+            if (mask_curve[i] < mask_curve2[i]) {
+                spectrum_buf[i * 2] = spectrum_for_atten[i * 2];
+                spectrum_buf[i * 2 + 1] = spectrum_for_atten[i * 2 + 1];
+            } else {
+                // FIXME: Calculating the atten_mag every time is inefficient.
+                // We had it in mask_curve2 before the clipping-filtering loop.
+                float atten_real = spectrum_for_atten[i * 2];
+                float atten_imag = spectrum_for_atten[i * 2 + 1];
+                float atten_mag = abs(std::complex<float>(atten_real, atten_imag)) * 2;
+                float remaining_mag = mask_curve2[i] - atten_mag;
+                float clip_real = spectrum_buf[i * 2] - atten_real;
+                float clip_imag = spectrum_buf[i * 2 + 1] - atten_imag;
+                float clip_mag = abs(std::complex<float>(clip_real, clip_imag)) * 2;
+                if (clip_mag > remaining_mag) {
+                    float scale = remaining_mag / clip_mag;
+                    spectrum_buf[i * 2] = atten_real + clip_real * scale;
+                    spectrum_buf[i * 2 + 1] = atten_imag + clip_imag * scale;
+                }
+            }
+        }
 
         pffft_transform_ordered(clipping_pffft, spectrum_buf, clipping_delta, NULL, PFFFT_BACKWARD);
         // see pffft.h
@@ -311,13 +339,26 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
     pffft_transform_ordered(this->pffft, windowed_frame, spectrum_buf, NULL, PFFFT_FORWARD);
     // reuse the spreading of the mask curve to calculate final bin level
     calculate_mask_curve(spectrum_buf, mask_curve);
+    float min_bin_gain = 1.0;
     for (int i = 0; i < this->num_psy_bins; i++) {
         float bin_atten = (mask_curve[i] + 0.000001) / (bin_level_in[i] + 0.000001);
+        float atkspd = attack_speed;
+        float relspd = release_speed;
+
+        atkspd *= pow(atkspd, 2.0 * i / this->num_psy_bins);
+        relspd *= pow(relspd, 2.0 * i / this->num_psy_bins);
+
         bin_atten = std::min(bin_atten, 1.0f);
-        bin_atten = std::max(bin_atten, attack_speed);
+        bin_atten = std::max(bin_atten, atkspd);
         bin_gain[i] *= bin_atten;
-        bin_gain[i] *= release_speed;
+        if(bin_atten == 1.0) {
+            bin_gain[i] *= relspd;
+        }
         bin_gain[i] = std::min<float>(bin_gain[i], 1.0);
+    }
+    // Limit gain difference between bins to avoid extreme EQ changes.
+    for (int i = 0; i < this->num_psy_bins; i++) {
+        bin_gain[i] = std::min(bin_gain[i], min_bin_gain * 4);
     }
 }
 
