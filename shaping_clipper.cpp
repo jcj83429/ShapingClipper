@@ -3,6 +3,14 @@
 #include <complex>
 #include <cmath>
 
+// Enable BIN_GAIN_DEBUG to output white noise shaped by the bin gain.
+// It can be viewed with a spectrogram.
+#define BIN_GAIN_DEBUG 0
+
+// Run calculate_mask_curve again after applying bin_gain to calculate bin_level_in
+// instead of scaling the mask_curve bin by bin. This should be more accurate.
+#define REAL_BIN_LEVEL_IN 1
+
 shaping_clipper::shaping_clipper(int sample_rate, int fft_size, float clip_level, int max_oversample) {
     this->sample_rate = sample_rate;
     this->size = fft_size;
@@ -34,8 +42,10 @@ shaping_clipper::shaping_clipper(int sample_rate, int fft_size, float clip_level
     this->out_dist_frame.resize(fft_size);
     this->margin_curve.resize(fft_size / 2 + 1);
     this->bin_gain.resize(fft_size / 2 + 1);
+    this->bin_hold.resize(fft_size / 2 + 1);
     for (int i = 0; i < fft_size / 2 + 1; i++) {
         this->bin_gain[i] = 1.0;
+        this->bin_hold[i] = 0;
     }
     // normally I use __builtin_ctz for this but the intrinsic is different for
     // different compilers.
@@ -46,11 +56,11 @@ shaping_clipper::shaping_clipper(int sample_rate, int fft_size, float clip_level
     this->spread_table_index.resize(this->num_psy_bins);
 
     // default curve
-    int points[][2] = { {0,16}, {125,16}, {250,16}, {500,16}, {1000,16}, {2000,16}, {4000,15}, {8000,15}, {16000,15}, {20000,-10} };
+    int points[][2] = { {0,15}, {125,15}, {250,15}, {500,16}, {1000,16}, {2000,16}, {4000,15}, {8000,15}, {16000,15}, {20000,-10} };
     int num_points = 10;
     set_margin_curve(points, num_points);
     generate_spread_table();
-    set_compress_speed(150, 150);
+    set_compress_speed(300, 300);
 }
 
 shaping_clipper::~shaping_clipper() {
@@ -123,11 +133,22 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
     pffft_transform_ordered(this->pffft, windowed_frame, spectrum_buf, NULL, PFFFT_FORWARD);
 
     calculate_mask_curve(spectrum_buf, mask_curve);
+
+#if REAL_BIN_LEVEL_IN
+    // borrow the spectrum_for_atten buffer.
+    for (int i = 0; i < this->num_psy_bins; i++) {
+        spectrum_for_atten[i * 2] = spectrum_buf[i * 2] * bin_gain[i];
+        spectrum_for_atten[i * 2 + 1] = spectrum_buf[i * 2 + 1] * bin_gain[i];
+    }
+    calculate_mask_curve(spectrum_for_atten, bin_level_in);
+#else
     // Reuse the spreading from the mask curve for the bin_level_in.
     // This is not completely accurate because it's not the same as applying the gain then doing the spreading.
     for (int i = 0; i < this->num_psy_bins; i++) {
         bin_level_in[i] = mask_curve[i] * bin_gain[i];
     }
+#endif
+
     mask_curve2[0] = abs(spectrum_buf[0]) * (1.0 - bin_gain[0]);
     for (int i = 1; i < this->num_psy_bins; i++) {
         float real = spectrum_buf[i * 2];
@@ -325,8 +346,24 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
         }
     }
 
+#if BIN_GAIN_DEBUG
+    // output white noise scaled by bin_gain
+    float* debug_temp = (float*)alloca(sizeof(float) * this->size);
+    spectrum_buf[0] = bin_gain[0] * (float)rand() * 256 / RAND_MAX;
+    for (int i = 0; i < this->num_psy_bins; i++) {
+        float gain = bin_gain[i];
+        spectrum_buf[i * 2] = gain * (float)rand() * 256 / RAND_MAX;
+        spectrum_buf[i * 2 + 1] = gain * (float)rand() * 256 / RAND_MAX;
+    }
+    pffft_transform_ordered(this->pffft, spectrum_buf, debug_temp, NULL, PFFFT_BACKWARD);
+    apply_window(debug_temp, this->out_dist_frame.data(), true);
+    diff_only = true;
+#else
+
     // do overlap & add
     apply_window(clipping_delta, this->out_dist_frame.data(), true);
+
+#endif
 
     for (int i = 0; i < this->overlap; i++) {
         // 4 times overlap with squared hanning window results in 1.5 time increase in amplitude
@@ -368,19 +405,19 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
         if (bin_level_in[i]) {
             bin_atten = std::min(1.0f, mask_curve[i] / bin_level_in[i]);
         }
-        float atkspd = attack_speed;
-        float relspd = release_speed;
-        atkspd *= pow(atkspd, 2.0 * i / this->num_psy_bins);
-        relspd *= pow(relspd, 2.0 * i / this->num_psy_bins);
-
         // Due to the shortcut used to calculate bin_level_in by scaling mask_curve,
         // there can be small differences between mask_curve and bin_level_in even when there is no attenuation,
-        // so use 0.999 here to ignore the small differences.
-        if (bin_atten < 0.999) {
-            bin_atten = std::max(bin_atten, atkspd);
+        // so use 0.99 here to ignore the small differences.
+        if (bin_atten < 0.99) {
+            bin_atten = std::max(bin_atten, attack_speed);
             bin_gain[i] *= bin_atten;
+            bin_hold[i] = 2;
         } else {
-            bin_gain[i] *= relspd;
+            if (bin_hold[i]) {
+                bin_hold[i]--;
+            } else {
+                bin_gain[i] *= release_speed;
+            }
         }
         bin_gain[i] = std::min<float>(bin_gain[i], 1.0);
     }

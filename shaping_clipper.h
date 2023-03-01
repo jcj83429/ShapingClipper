@@ -87,6 +87,8 @@ private:
      */
     std::vector<float> in_frame, out_dist_frame, margin_curve, window, inv_window, spread_table, bin_gain;
 
+    std::vector<int> bin_hold;
+
     /**
      *  spreadtableIndex: for each bin, which entry in the spread table to use
      *                    (eacn entry is num_psy_bins values)
