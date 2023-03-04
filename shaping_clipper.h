@@ -141,6 +141,10 @@ private:
      */
     void limit_clip_spectrum(float* clip_spectrum, const float* mask_curve);
 
+    /**
+     *  Update the bin_gain based on the bin levels before and after clipping.
+     */
+    void update_bin_gain(const float* bin_level_in, const float* bin_level_out);
 };
 
 class shaping_clipper_stereo_coupler

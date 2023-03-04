@@ -399,32 +399,7 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
     pffft_transform_ordered(this->pffft, windowed_frame, spectrum_buf, NULL, PFFFT_FORWARD);
     // reuse the spreading of the mask curve to calculate final bin level
     calculate_mask_curve(spectrum_buf, mask_curve);
-    float min_bin_gain = 1.0;
-    for (int i = 0; i < this->num_psy_bins; i++) {
-        float bin_atten = 1.0;
-        if (bin_level_in[i]) {
-            bin_atten = std::min(1.0f, mask_curve[i] / bin_level_in[i]);
-        }
-        // Due to the shortcut used to calculate bin_level_in by scaling mask_curve,
-        // there can be small differences between mask_curve and bin_level_in even when there is no attenuation,
-        // so use 0.99 here to ignore the small differences.
-        if (bin_atten < 0.99) {
-            bin_atten = std::max(bin_atten, attack_speed);
-            bin_gain[i] *= bin_atten;
-            bin_hold[i] = 2;
-        } else {
-            if (bin_hold[i]) {
-                bin_hold[i]--;
-            } else {
-                bin_gain[i] *= release_speed;
-            }
-        }
-        bin_gain[i] = std::min<float>(bin_gain[i], 1.0);
-    }
-    // Limit gain difference between bins to avoid extreme EQ changes.
-    for (int i = 0; i < this->num_psy_bins; i++) {
-        bin_gain[i] = std::min(bin_gain[i], min_bin_gain * 4);
-    }
+    update_bin_gain(bin_level_in, mask_curve);
 }
 
 void shaping_clipper::generate_hann_window() {
@@ -629,6 +604,35 @@ void shaping_clipper::limit_clip_spectrum(float* clip_spectrum, const float* mas
         if (relative_distortion_level > 1.0) {
             clip_spectrum[1] /= relative_distortion_level;
         }
+    }
+}
+
+void shaping_clipper::update_bin_gain(const float* bin_level_in, const float* bin_level_out) {
+    float min_bin_gain = 1.0;
+    for (int i = 0; i < this->num_psy_bins; i++) {
+        float bin_atten = 1.0;
+        if (bin_level_in[i]) {
+            bin_atten = std::min(1.0f, bin_level_out[i] / bin_level_in[i]);
+        }
+        // Due to the shortcut used to calculate bin_level_in by scaling mask_curve,
+        // there can be small differences between mask_curve and bin_level_in even when there is no attenuation,
+        // so use 0.99 here to ignore the small differences.
+        if (bin_atten < 0.99) {
+            bin_atten = std::max(bin_atten, attack_speed);
+            bin_gain[i] *= bin_atten;
+            bin_hold[i] = 2;
+        } else {
+            if (bin_hold[i]) {
+                bin_hold[i]--;
+            } else {
+                bin_gain[i] *= release_speed;
+            }
+        }
+        bin_gain[i] = std::min<float>(bin_gain[i], 1.0);
+    }
+    // Limit gain difference between bins to avoid extreme EQ changes.
+    for (int i = 0; i < this->num_psy_bins; i++) {
+        bin_gain[i] = std::min(bin_gain[i], min_bin_gain * 4);
     }
 }
 
