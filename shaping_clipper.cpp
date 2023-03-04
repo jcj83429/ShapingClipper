@@ -56,7 +56,7 @@ shaping_clipper::shaping_clipper(int sample_rate, int fft_size, float clip_level
     this->spread_table_index.resize(this->num_psy_bins);
 
     // default curve
-    int points[][2] = { {0,15}, {125,15}, {250,15}, {500,16}, {1000,16}, {2000,16}, {4000,15}, {8000,15}, {16000,15}, {20000,-10} };
+    int points[][2] = { {0,15}, {125,15}, {250,15}, {500,16}, {1000,16}, {2000,16}, {4000,15}, {8000,15}, {16000,15}, {20000,14} };
     int num_points = 10;
     set_margin_curve(points, num_points);
     generate_spread_table();
@@ -483,7 +483,7 @@ void shaping_clipper::set_margin_curve(int points[][2], int num_points) {
     for (int i = 0; i < num_points - 1; i++) {
         while (j < this->size / 2 + 1 && j * this->sample_rate / this->size < points[i + 1][0]) {
             // linearly interpolate between points
-            int binHz = j * this->sample_rate / this->size;
+            float binHz = j * this->sample_rate / this->size;
             margin_curve[j] = points[i][1] + (binHz - points[i][0]) * (points[i + 1][1] - points[i][1]) / (points[i + 1][0] - points[i][0]);
             j++;
         }
@@ -546,14 +546,19 @@ void shaping_clipper::calculate_mask_curve(const float* spectrum, float* mask_cu
             // Multiply the magnitude by 2 to simulate adding up the + and - frequencies.
             magnitude = abs(std::complex<float>(spectrum[2 * i], spectrum[2 * i + 1])) * 2;
         }
+        float energy = magnitude * magnitude;
         int table_idx = this->spread_table_index[i];
         std::pair<int, int> range = this->spread_table_range[table_idx];
         int base_idx = table_idx * this->num_psy_bins;
         int start_bin = std::max(0, i + range.first);
         int end_bin = std::min(this->num_psy_bins, i + range.second);
         for (int j = start_bin; j < end_bin; j++) {
-            mask_curve[j] += this->spread_table[base_idx + this->num_psy_bins / 2 + j - i] * magnitude;
+            mask_curve[j] += this->spread_table[base_idx + this->num_psy_bins / 2 + j - i] * energy;
         }
+    }
+    // sqrt back to magnitude
+    for (int i = 0; i < this->num_psy_bins; i++) {
+        mask_curve[i] = sqrt(mask_curve[i]);
     }
 
     // for ultrasonic frequencies, skip the O(n^2) spread calculation and just copy the magnitude
