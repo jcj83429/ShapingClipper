@@ -439,10 +439,10 @@ void shaping_clipper::generate_spread_table() {
             float value;
             if (j >= bin) {
                 // mask up
-                value = exp(-rel_idx_log * 40);
+                value = exp(-rel_idx_log * 60);
             } else {
                 // mask down
-                value = exp(-rel_idx_log * 80);
+                value = exp(-rel_idx_log * 100);
             }
             // the spreading function is centred in the row
             sum += value;
