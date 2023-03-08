@@ -623,16 +623,17 @@ void shaping_clipper::update_bin_gain(const float* bin_level_in, const float* bi
         // there can be small differences between mask_curve and bin_level_in even when there is no attenuation,
         // so use 0.99 here to ignore the small differences.
         if (bin_atten < 0.99) {
-            bin_atten = std::max(bin_atten, attack_speed);
-            bin_gain[i] *= bin_atten;
-            bin_hold[i] = 2;
-        } else {
-            if (bin_hold[i]) {
-                bin_hold[i]--;
-            } else {
-                bin_gain[i] *= release_speed;
-            }
+            bin_hold[i] = 3;
         }
+
+        if (bin_hold[i]) {
+            bin_hold[i]--;
+        } else {
+            bin_atten *= release_speed;
+        }
+        bin_atten = std::max(bin_atten, attack_speed);
+
+        bin_gain[i] *= bin_atten;
         bin_gain[i] = std::min<float>(bin_gain[i], 1.0);
     }
     // Limit gain difference between bins to avoid extreme EQ changes.
