@@ -75,6 +75,7 @@ private:
     float adaptive_distortion_strength;
     float attack_speed;
     float release_speed;
+    int frame_ctr = 0;
 
     /**
      *  in_frame: unmodified input audio

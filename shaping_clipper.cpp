@@ -347,16 +347,36 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
     }
 
 #if BIN_GAIN_DEBUG
-    // output white noise scaled by bin_gain
-    float* debug_temp = (float*)alloca(sizeof(float) * this->size);
-    spectrum_buf[0] = bin_gain[0] * (float)rand() * 256 / RAND_MAX;
-    for (int i = 0; i < this->num_psy_bins; i++) {
-        float gain = bin_gain[i];
-        spectrum_buf[i * 2] = gain * (float)rand() * 256 / RAND_MAX;
-        spectrum_buf[i * 2 + 1] = gain * (float)rand() * 256 / RAND_MAX;
+    // output tones scaled by bin_gain
+    // This produces impulses with the spectral shape of bin_gain.
+    if(frame_ctr == 0)
+    {
+        for (int i = 0; i < this->size; i++) {
+            spectrum_buf[i] = 0;
+        }
+        float* debug_temp = (float*)alloca(sizeof(float) * this->size);
+        spectrum_buf[0] = bin_gain[0] * 128;
+        std::complex<float> phase = pow(std::complex<float>(0, 1), (float)frame_ctr);
+        std::complex<float> bin_vec = phase;
+        for (int i = 1; i < this->num_psy_bins; i++) {
+            float gain = bin_gain[i];
+            spectrum_buf[i * 2] = gain * 128 * bin_vec.real();
+            spectrum_buf[i * 2 + 1] = gain * 128 * bin_vec.imag();
+            bin_vec *= phase;
+        }
+        pffft_transform_ordered(this->pffft, spectrum_buf, debug_temp, NULL, PFFFT_BACKWARD);
+        // rotate the frame to put the peak in the middle.
+        for (int i = 0; i < this->size / 2; i++) {
+            float tmp = debug_temp[i];
+            debug_temp[i] = debug_temp[i + this->size / 2];
+            debug_temp[i + this->size / 2] = tmp;
+        }
+        // If the "if" condition is changed to output once every 4 frames (no overlap between outputs), use memcpy.
+        // If outputting every frame or every 2 frames, use apply_window.
+        //apply_window(debug_temp, this->out_dist_frame.data(), true);
+        memcpy(this->out_dist_frame.data(), debug_temp, this->size * sizeof(float));
     }
-    pffft_transform_ordered(this->pffft, spectrum_buf, debug_temp, NULL, PFFFT_BACKWARD);
-    apply_window(debug_temp, this->out_dist_frame.data(), true);
+    frame_ctr = (frame_ctr + 1) % 4;
     diff_only = true;
 #else
 
