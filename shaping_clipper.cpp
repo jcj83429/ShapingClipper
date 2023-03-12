@@ -3,8 +3,9 @@
 #include <complex>
 #include <cmath>
 
-// Enable BIN_GAIN_DEBUG to output white noise shaped by the bin gain.
-// It can be viewed with a spectrogram.
+// 0: normal output
+// 1: output the bin_gain as tones, to be viewed with a spectrogram
+// 2: output the audio after bin_gain is applied and before clipping
 #define BIN_GAIN_DEBUG 0
 
 // Run calculate_mask_curve again after applying bin_gain to calculate bin_level_in
@@ -56,8 +57,8 @@ shaping_clipper::shaping_clipper(int sample_rate, int fft_size, float clip_level
     this->spread_table_index.resize(this->num_psy_bins);
 
     // default curve
-    int points[][2] = { {0,15}, {125,15}, {250,15}, {500,16}, {1000,16}, {2000,16}, {4000,15}, {8000,15}, {16000,15}, {20000,14} };
-    int num_points = 10;
+    int points[][2] = { {0,15}, {125,15}, {250,15}, {500,16}, {1000,16}, {2000,16}, {4000,15}, {8000,15}, {16000,15}, {24000,14}, {25000, 0} };
+    int num_points = 11;
     set_margin_curve(points, num_points);
     generate_spread_table();
     set_compress_speed(300, 300);
@@ -346,7 +347,21 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
         }
     }
 
-#if BIN_GAIN_DEBUG
+    // update bin gain
+    for (int i = 0; i < this->size; i++) {
+        windowed_frame[i] += clipping_delta[i];
+    }
+    pffft_transform_ordered(this->pffft, windowed_frame, spectrum_buf, NULL, PFFFT_FORWARD);
+    // reuse the spreading of the mask curve to calculate final bin level
+    calculate_mask_curve(spectrum_buf, mask_curve);
+    update_bin_gain(bin_level_in, mask_curve);
+
+#if BIN_GAIN_DEBUG == 1
+#define ARRAY_TO_DUMP bin_gain
+#define SCALE 128
+//#define ARRAY_TO_DUMP bin_level_in
+//#define SCALE 1/256
+
     // output tones scaled by bin_gain
     // This produces impulses with the spectral shape of bin_gain.
     if(frame_ctr == 0)
@@ -355,13 +370,13 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
             spectrum_buf[i] = 0;
         }
         float* debug_temp = (float*)alloca(sizeof(float) * this->size);
-        spectrum_buf[0] = bin_gain[0] * 128;
+        spectrum_buf[0] = ARRAY_TO_DUMP[0] * SCALE;
         std::complex<float> phase = pow(std::complex<float>(0, 1), (float)frame_ctr);
         std::complex<float> bin_vec = phase;
         for (int i = 1; i < this->num_psy_bins; i++) {
-            float gain = bin_gain[i];
-            spectrum_buf[i * 2] = gain * 128 * bin_vec.real();
-            spectrum_buf[i * 2 + 1] = gain * 128 * bin_vec.imag();
+            float gain = ARRAY_TO_DUMP[i];
+            spectrum_buf[i * 2] = gain * SCALE * bin_vec.real();
+            spectrum_buf[i * 2 + 1] = gain * SCALE * bin_vec.imag();
             bin_vec *= phase;
         }
         pffft_transform_ordered(this->pffft, spectrum_buf, debug_temp, NULL, PFFFT_BACKWARD);
@@ -379,6 +394,13 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
     frame_ctr = (frame_ctr + 1) % 4;
     diff_only = true;
 #else
+
+#if BIN_GAIN_DEBUG == 2
+    pffft_transform_ordered(this->pffft, spectrum_for_atten, clipping_delta, NULL, PFFFT_BACKWARD);
+    for (int i = 0; i < this->size; i++) {
+        clipping_delta[i] /= this->size * this->oversample;
+    }
+#endif
 
     // do overlap & add
     apply_window(clipping_delta, this->out_dist_frame.data(), true);
@@ -411,15 +433,6 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
             out_samples[i] += this->in_frame[i];
         }
     }
-
-    // update bin gain
-    for (int i = 0; i < this->size; i++) {
-        windowed_frame[i] += clipping_delta[i];
-    }
-    pffft_transform_ordered(this->pffft, windowed_frame, spectrum_buf, NULL, PFFFT_FORWARD);
-    // reuse the spreading of the mask curve to calculate final bin level
-    calculate_mask_curve(spectrum_buf, mask_curve);
-    update_bin_gain(bin_level_in, mask_curve);
 }
 
 void shaping_clipper::generate_hann_window() {
@@ -633,7 +646,7 @@ void shaping_clipper::limit_clip_spectrum(float* clip_spectrum, const float* mas
 }
 
 void shaping_clipper::update_bin_gain(const float* bin_level_in, const float* bin_level_out) {
-    float min_bin_gain = 1.0;
+    float *slope_limited_bin_gain = (float*)alloca(sizeof(float) * this->num_psy_bins);
     for (int i = 0; i < this->num_psy_bins; i++) {
         float bin_atten = 1.0;
         if (bin_level_in[i]) {
@@ -656,9 +669,42 @@ void shaping_clipper::update_bin_gain(const float* bin_level_in, const float* bi
         bin_gain[i] *= bin_atten;
         bin_gain[i] = std::min<float>(bin_gain[i], 1.0);
     }
-    // Limit gain difference between bins to avoid extreme EQ changes.
+
+    // Limit bin_gain slope to first order (6dB per octave). This is for a few reasons
+    // 1. Sharp changes in bin_gain sound unnatural
+    // 2. Sharp changes in bin_gain can depress loud sounds and bring up sounds (i.e. distortion) in the source that were masked by loud sounds.
+    // 3  To take advantage of the additional protection given to attenuated bins.
+    //    This prevents bins that are not otherwise not attenuated from getting too much distortion relative to bins that are attenuated.
+    slope_limited_bin_gain[0] = bin_gain[0];
+    for (int basebin = 1; basebin < this->num_psy_bins;) {
+        float base_bin_gain = slope_limited_bin_gain[basebin] = bin_gain[basebin];
+        int otherbin = basebin + 1;
+        while (otherbin < this->num_psy_bins) {
+            float scaled_bin_gain = std::min(1.0f, base_bin_gain * (float)otherbin / basebin);
+            if (scaled_bin_gain >= bin_gain[otherbin]) {
+                break;
+            }
+            slope_limited_bin_gain[otherbin] = scaled_bin_gain;
+            otherbin++;
+        }
+        basebin = otherbin;
+    }
+    for (int basebin = this->num_psy_bins - 1; basebin > 0;) {
+        float base_bin_gain = slope_limited_bin_gain[basebin];
+        int otherbin = basebin - 1;
+        while (otherbin > 0) {
+            float scaled_bin_gain = std::min(1.0f, base_bin_gain * (float)basebin / otherbin);
+            if (scaled_bin_gain >= slope_limited_bin_gain[otherbin]) {
+                break;
+            }
+            slope_limited_bin_gain[otherbin] = scaled_bin_gain;
+            otherbin--;
+        }
+        basebin = otherbin;
+    }
     for (int i = 0; i < this->num_psy_bins; i++) {
-        bin_gain[i] = std::min(bin_gain[i], min_bin_gain * 4);
+        // allow 3dB of local gain variation
+        bin_gain[i] = std::min(bin_gain[i], slope_limited_bin_gain[i] * 1.41f);
     }
 }
 
