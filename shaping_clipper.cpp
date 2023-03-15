@@ -640,10 +640,17 @@ void shaping_clipper::update_bin_gain(const float* bin_level_in, const float* bi
         if (bin_level_in[i]) {
             bin_atten = std::min(1.0f, bin_level_out[i] / bin_level_in[i]);
         }
-        // Due to the shortcut used to calculate bin_level_in by scaling mask_curve,
-        // there can be small differences between mask_curve and bin_level_in even when there is no attenuation,
-        // so use 0.99 here to ignore the small differences.
-        if (bin_atten < 0.99) {
+        // Ignore small attenuations for release-hold decision, especially for already-attenuated bins.
+        // If this is not done, then bins that are attenuated will tend to get attenuated more.
+        // This can sometimes cause a downward spiral where everything keeps getting attenuated until the output is far below clipping threshold.
+        // The reason is probably that adjusting the bin gain causes the ends of the frame to exceed the window, causing additional clipping,
+        // Exactly when it happens seems to be random.
+        //
+        // This is still a hack, and it still doesn't work reliably.
+        // A proper formula needs to consider the absolute bin level difference and the clipping threshold,
+        // but it may not be needed if lookahead is implemented, as lookahead would replace bin_hold completely.
+
+        if (bin_atten < 1 - 0.01 / sqrt(bin_gain[i])) {
             bin_hold[i] = 3;
         }
 
