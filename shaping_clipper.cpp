@@ -8,10 +8,6 @@
 // 2: output the audio after bin_gain is applied and before clipping
 #define BIN_GAIN_DEBUG 0
 
-// Run calculate_mask_curve again after applying bin_gain to calculate bin_level_in
-// instead of scaling the mask_curve bin by bin. This should be more accurate.
-#define REAL_BIN_LEVEL_IN 1
-
 shaping_clipper::shaping_clipper(int sample_rate, int fft_size, float clip_level, int max_oversample) {
     this->sample_rate = sample_rate;
     this->size = fft_size;
@@ -135,20 +131,12 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
 
     calculate_mask_curve(spectrum_buf, mask_curve);
 
-#if REAL_BIN_LEVEL_IN
     // borrow the spectrum_for_atten buffer.
     for (int i = 0; i < this->num_psy_bins; i++) {
         spectrum_for_atten[i * 2] = spectrum_buf[i * 2] * bin_gain[i];
         spectrum_for_atten[i * 2 + 1] = spectrum_buf[i * 2 + 1] * bin_gain[i];
     }
     calculate_mask_curve(spectrum_for_atten, bin_level_in);
-#else
-    // Reuse the spreading from the mask curve for the bin_level_in.
-    // This is not completely accurate because it's not the same as applying the gain then doing the spreading.
-    for (int i = 0; i < this->num_psy_bins; i++) {
-        bin_level_in[i] = mask_curve[i] * bin_gain[i];
-    }
-#endif
 
     mask_curve2[0] = abs(spectrum_buf[0]) * (1.0 - bin_gain[0]);
     for (int i = 1; i < this->num_psy_bins; i++) {
