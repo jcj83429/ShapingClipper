@@ -64,7 +64,7 @@ public:
     void set_lookahead_frames(unsigned int lookahead_frames);
 
 private:
-    int size;
+    unsigned int size;
     int max_oversample;
     int oversample;
     unsigned int m_max_lookahead_frames;
@@ -126,10 +126,14 @@ private:
      *              If null, then no bin_gain is applied (as if gain is 1 for every bin)
      * bin_gain_out: The bin gain at the end of the clipping-filtering loop.
      *               May be null or same as bin_gain_in.
+     * iterations, adaptive_distortion_strength: These can be set to faster settings for the lookahead pass
+     * allow_oversample: true: use oversampling if oversampling is enabled through set_oversample
+     *                   false: never use oversampling
      *
      * in_frame is not windowed. out_dist_frame is windowed once.
      */
-    void clip_frame(const float* in_frame, float* out_dist_frame, const float* bin_gain_in, float* bin_gain_out);
+    void clip_frame(const float* in_frame, float* out_dist_frame, const float* bin_gain_in, float* bin_gain_out,
+                    unsigned int iterations, float adaptive_distortion_strength, bool allow_oversample);
 
     /**
      *  Applies the window to the in_frame and store the result in the out_frame
@@ -145,9 +149,8 @@ private:
      *  to get the effective sample values, taking previous clipping iterations
      *  into account.
      *  Should only be used with windowed input.
-     *  Operates on oversampled samples if oversampling is enabled.
      */
-    void clip_to_window(const float* windowed_frame, float* clipping_delta, float delta_boost = 1.0);
+    void clip_to_window(const float* windowed_frame, float* clipping_delta, float delta_boost, unsigned int oversample);
 
     /**
      *  Calculates the original signal level considering psychoacoustic masking.
@@ -158,7 +161,7 @@ private:
     /**
      *  Limit the magnitude of each bin to the mask_curve
      */
-    void limit_clip_spectrum(float* clip_spectrum, const float* mask_curve);
+    void limit_clip_spectrum(float* clip_spectrum, const float* mask_curve, unsigned int oversample);
 
     /**
      *  Update the bin_gain based on the bin level ratio before and after clipping.

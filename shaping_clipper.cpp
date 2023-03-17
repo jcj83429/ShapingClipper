@@ -124,10 +124,10 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
         this->out_dist_frame[i + this->size - this->overlap] = 0;
     }
 
-    float* clipping_delta = (float*)alloca(sizeof(float) * this->size * this->oversample);
-    float* current_frame_bin_atten = (float*)alloca(sizeof(float) * (this->size / 2 + 1));
+    float* clipping_delta = (float*)alloca(sizeof(float) * this->size);
+    float* current_frame_bin_atten = (float*)alloca(sizeof(float) * this->num_psy_bins);
 
-    clip_frame(this->in_frame.data(), clipping_delta, this->bin_gain.data(), current_frame_bin_atten);
+    clip_frame(this->in_frame.data(), clipping_delta, this->bin_gain.data(), current_frame_bin_atten, this->iterations, this->adaptive_distortion_strength, true);
     update_bin_gain(current_frame_bin_atten);
 
 #if BIN_GAIN_DEBUG == 1
@@ -307,11 +307,13 @@ void shaping_clipper::set_margin_curve(int points[][2], int num_points) {
     }
 }
 
-void shaping_clipper::clip_frame(const float* in_frame, float* out_dist_frame, const float* bin_gain_in, float* bin_gain_out) {
+void shaping_clipper::clip_frame(const float* in_frame, float* out_dist_frame, const float* bin_gain_in, float* bin_gain_out,
+                                 unsigned int iterations, float adaptive_distortion_strength, bool allow_oversample) {
+    unsigned int oversample = allow_oversample ? this->oversample : 1;
     float peak;
-    float* windowed_frame = (float*)alloca(sizeof(float) * this->size * this->oversample);
-    float* clipping_delta = out_dist_frame ? out_dist_frame : (float*)alloca(sizeof(float) * this->size * this->oversample);
-    float* spectrum_buf = (float*)alloca(sizeof(float) * this->size * this->oversample);
+    float* windowed_frame = (float*)alloca(sizeof(float) * this->size * oversample);
+    float* clipping_delta = (float*)alloca(sizeof(float) * this->size * oversample);
+    float* spectrum_buf = (float*)alloca(sizeof(float) * this->size * oversample);
     float* spectrum_for_atten = (float*)alloca(sizeof(float) * this->size);
     float* mask_curve = (float*)alloca(sizeof(float) * (this->size / 2 + 1));
     float* mask_curve2 = (float*)alloca(sizeof(float) * (this->size / 2 + 1));
@@ -354,25 +356,25 @@ void shaping_clipper::clip_frame(const float* in_frame, float* out_dist_frame, c
         mask_curve2[i] = 0;
     }
 
-    int clipping_samples = this->size * this->oversample;
-    int window_stride = this->max_oversample / this->oversample;
+    int clipping_samples = this->size * oversample;
+    int window_stride = this->max_oversample / oversample;
     PFFFT_Setup* clipping_pffft = this->pffft;
-    if (this->oversample > 1) {
+    if (oversample > 1) {
         clipping_pffft = this->pffft_oversampled;
 
         // use IFFT to oversample the windowed frame
         spectrum_buf[this->size] = spectrum_buf[1] / 2;
         spectrum_buf[1] = 0;
-        for (int i = this->size + 1; i < this->size * this->oversample; i++) {
+        for (int i = this->size + 1; i < this->size * oversample; i++) {
             spectrum_buf[i] = 0;
         }
         // adjust scaling for oversampling
         for (int i = 0; i <= this->size; i++) {
-            spectrum_buf[i] *= this->oversample;
+            spectrum_buf[i] *= oversample;
         }
         for (int i = 0; i < this->size / 2 + 1; i++) {
-            mask_curve[i] *= this->oversample;
-            mask_curve2[i] *= this->oversample;
+            mask_curve[i] *= oversample;
+            mask_curve2[i] *= oversample;
         }
         pffft_transform_ordered(this->pffft_oversampled, spectrum_buf, windowed_frame, NULL, PFFFT_BACKWARD);
         for (int i = 0; i < clipping_samples; i++) {
@@ -412,10 +414,10 @@ void shaping_clipper::clip_frame(const float* in_frame, float* out_dist_frame, c
     peak = orig_peak;
 
     // repeat clipping-filtering process a few times to control both the peaks and the spectrum
-    for (int i = 0; i < this->iterations; i++) {
+    for (int i = 0; i < iterations; i++) {
         // The last 1/3 of rounds have boosted delta to help reach the peak target faster
         float delta_boost = 1.0;
-        if (i >= this->iterations - this->iterations / 3) {
+        if (i >= iterations - iterations / 3) {
             // boosting the delta when largs peaks are still present is dangerous
             if (peak < 2.0) {
                 delta_boost = 2.0;
@@ -426,20 +428,20 @@ void shaping_clipper::clip_frame(const float* in_frame, float* out_dist_frame, c
             mask_curve2[i] = std::max(mask_curve[i], mask_curve2[i]);
         }
 
-        clip_to_window(windowed_frame, clipping_delta, delta_boost);
+        clip_to_window(windowed_frame, clipping_delta, delta_boost, oversample);
 
         pffft_transform_ordered(clipping_pffft, clipping_delta, spectrum_buf, NULL, PFFFT_FORWARD);
 
-        if (this->oversample > 1) {
+        if (oversample > 1) {
             // Zero out all frequency bins above the base nyquist rate.
             // limit_clip_spectrum doesn't handle these bins.
             spectrum_buf[1] = 0;
-            for (int i = this->size + 1; i < this->size * this->oversample; i++) {
+            for (int i = this->size + 1; i < this->size * oversample; i++) {
                 spectrum_buf[i] = 0;
             }
         }
 
-        limit_clip_spectrum(spectrum_buf, mask_curve2);
+        limit_clip_spectrum(spectrum_buf, mask_curve2, oversample);
 
         // For bins whose allowed clipping distortion is less than the effect of attenuation hold,
         // forbid all clipping distortion by setting their values back to the attenuation hold values.
@@ -500,7 +502,7 @@ void shaping_clipper::clip_frame(const float* in_frame, float* out_dist_frame, c
         float mask_curve_shift = 1.122; // 1.122 is 1dB
         if (orig_peak > 1.0 && peak > 1.0) {
             float diff_achieved = orig_peak - peak;
-            if (i + 1 < this->iterations - this->iterations / 3 && diff_achieved > 0) {
+            if (i + 1 < iterations - iterations / 3 && diff_achieved > 0) {
                 float diff_needed = orig_peak - 1.0;
                 float diff_ratio = diff_needed / diff_achieved;
                 // If a good amount of peak reduction was already achieved,
@@ -516,7 +518,7 @@ void shaping_clipper::clip_frame(const float* in_frame, float* out_dist_frame, c
             }
         }
 
-        mask_curve_shift = 1.0 + (mask_curve_shift - 1.0) * this->adaptive_distortion_strength;
+        mask_curve_shift = 1.0 + (mask_curve_shift - 1.0) * adaptive_distortion_strength;
 
         // Be less strict in the next iteration.
         // This helps with peak control.
@@ -525,12 +527,18 @@ void shaping_clipper::clip_frame(const float* in_frame, float* out_dist_frame, c
         }
     }
 
-    if (this->oversample > 1) {
+    if (oversample > 1) {
         // Downsample back to original rate.
         // We already zeroed out all frequency bins above the base nyquist rate so we can simply drop samples here.
         for (int i = 0; i < this->size; i++) {
-            clipping_delta[i] = clipping_delta[i * this->oversample];
-            windowed_frame[i] = windowed_frame[i * this->oversample];
+            clipping_delta[i] = clipping_delta[i * oversample];
+            windowed_frame[i] = windowed_frame[i * oversample];
+        }
+    }
+
+    if (out_dist_frame) {
+        for (int i = 0; i < this->size; i++) {
+            out_dist_frame[i] = clipping_delta[i];
         }
     }
 
@@ -565,10 +573,10 @@ void shaping_clipper::apply_window(const float* in_frame, float* out_frame, cons
     }
 }
 
-void shaping_clipper::clip_to_window(const float* windowed_frame, float* clipping_delta, float delta_boost) {
+void shaping_clipper::clip_to_window(const float* windowed_frame, float* clipping_delta, float delta_boost, unsigned int oversample) {
     const float* window = this->window.data();
-    int total_samples = this->size * this->oversample;
-    int window_stride = this->max_oversample / this->oversample;
+    int total_samples = this->size * oversample;
+    int window_stride = this->max_oversample / oversample;
     for (int i = 0; i < total_samples; i++) {
         float limit = this->clip_level * *window;
         float effective_value = windowed_frame[i] + clipping_delta[i];
@@ -631,7 +639,7 @@ void shaping_clipper::calculate_mask_curve(const float* spectrum, float* mask_cu
     }
 }
 
-void shaping_clipper::limit_clip_spectrum(float* clip_spectrum, const float* mask_curve) {
+void shaping_clipper::limit_clip_spectrum(float* clip_spectrum, const float* mask_curve, unsigned int oversample) {
     // bin 0
     float relative_distortion_level = std::abs(clip_spectrum[0]) / mask_curve[0];
     if (relative_distortion_level > 1.0) {
@@ -640,7 +648,7 @@ void shaping_clipper::limit_clip_spectrum(float* clip_spectrum, const float* mas
     // bin 1..N/2-1
     // When oversampling is on, the base nyquist bin is handled in this loop
     int i = 1;
-    int bins_below_nyquist = std::min(this->size * this->oversample / 2, this->size / 2 + 1);
+    int bins_below_nyquist = std::min(this->size * oversample / 2, this->size / 2 + 1);
     for (; i < bins_below_nyquist; i++) {
         float real = clip_spectrum[i * 2];
         float imag = clip_spectrum[i * 2 + 1];
