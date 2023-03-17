@@ -15,7 +15,7 @@ public:
      *  fftSize should be a multiple of 4.
      *  clip_level means symmetric clipping from -clip_level to +clip_level
      */
-    shaping_clipper(int sample_rate, int fft_size, float clip_level = 16384, int max_oversample = 4);
+    shaping_clipper(int sample_rate, int fft_size, float clip_level = 16384, int max_oversample = 4, unsigned int max_lookahead_frames = 0);
     ~shaping_clipper();
 
     /**
@@ -61,10 +61,14 @@ public:
 
     void set_compress_speed(float attack_db_per_sec, float release_db_per_sec);
 
+    void set_lookahead_frames(unsigned int lookahead_frames);
+
 private:
     int size;
     int max_oversample;
     int oversample;
+    unsigned int m_max_lookahead_frames;
+    unsigned int m_lookahead_frames;
     int overlap;
     int num_psy_bins;
     PFFFT_Setup* pffft;

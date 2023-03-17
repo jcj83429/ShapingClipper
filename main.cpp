@@ -161,10 +161,11 @@ int main(int argc, char* argv[])
 	shaping_clipper_stereo_coupler *stereo_coupler = NULL;
 	int fftSize = sampleRate <= 50000 ? 256 : sampleRate <= 100000 ? 512 : 1024;
 	for(int i = 0; i < channels; i++) {
-		clippers.push_back(new shaping_clipper(sampleRate, fftSize, fullScale*clipLevel));
+		clippers.push_back(new shaping_clipper(sampleRate, fftSize, fullScale*clipLevel, 4, 10));
 		clippers[i]->set_adaptive_distortion_strength(adaptiveDistortion);
 		clippers[i]->set_iterations(iterations);
 		clippers[i]->set_oversample(1);
+		//clippers[i]->set_lookahead_frames(10);
 	}
 	if (channels == 2) {
 		stereo_coupler = new shaping_clipper_stereo_coupler(clippers[0], clippers[1]);

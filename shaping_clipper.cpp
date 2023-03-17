@@ -8,12 +8,14 @@
 // 2: output the audio after bin_gain is applied and before clipping
 #define BIN_GAIN_DEBUG 0
 
-shaping_clipper::shaping_clipper(int sample_rate, int fft_size, float clip_level, int max_oversample) {
+shaping_clipper::shaping_clipper(int sample_rate, int fft_size, float clip_level, int max_oversample, unsigned int max_lookahead_frames) {
     this->sample_rate = sample_rate;
     this->size = fft_size;
     max_oversample = 1 << (int)log2(std::max(1, max_oversample));
     this->max_oversample = max_oversample;
     this->oversample = 1;
+    m_max_lookahead_frames = max_lookahead_frames;
+    m_lookahead_frames = 0;
     this->clip_level = clip_level;
     this->iterations = 6;
     this->adaptive_distortion_strength = 1.0;
@@ -35,7 +37,7 @@ shaping_clipper::shaping_clipper(int sample_rate, int fft_size, float clip_level
     this->inv_window.resize(fft_size * max_oversample);
     generate_hann_window();
 
-    this->in_frame.resize(fft_size);
+    this->in_frame.resize(fft_size + m_max_lookahead_frames * this->overlap);
     this->out_dist_frame.resize(fft_size);
     this->margin_curve.resize(fft_size / 2 + 1);
     this->bin_gain.resize(fft_size / 2 + 1);
@@ -105,14 +107,20 @@ void shaping_clipper::set_compress_speed(float attack_db_per_sec, float release_
     release_speed = pow(10, release_db_per_frame / 20);
 }
 
+void shaping_clipper::set_lookahead_frames(unsigned int lookahead_frames) {
+    m_lookahead_frames = std::min(lookahead_frames, m_max_lookahead_frames);
+}
+
 void shaping_clipper::feed(const float* in_samples, float* out_samples, bool diff_only, float* total_margin_shift) {
     // shift in/out buffers
-    for (int i = 0; i < this->size - this->overlap; i++) {
+    for (int i = 0; i < this->size + m_lookahead_frames * this->overlap - this->overlap; i++) {
         this->in_frame[i] = this->in_frame[i + this->overlap];
+    }
+    for (int i = 0; i < this->size - this->overlap; i++) {
         this->out_dist_frame[i] = this->out_dist_frame[i + this->overlap];
     }
     for (int i = 0; i < this->overlap; i++) {
-        this->in_frame[i + this->size - this->overlap] = in_samples[i];
+        this->in_frame[i + this->size + m_lookahead_frames * this->overlap - this->overlap] = in_samples[i];
         this->out_dist_frame[i + this->size - this->overlap] = 0;
     }
 
