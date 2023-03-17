@@ -133,17 +133,16 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
 #if BIN_GAIN_DEBUG == 1
 #define ARRAY_TO_DUMP bin_gain
 #define SCALE 128
-//#define ARRAY_TO_DUMP bin_level_in
-//#define SCALE 1/256
 
     // output tones scaled by bin_gain
     // This produces impulses with the spectral shape of bin_gain.
     if(frame_ctr == 0)
     {
+        float* spectrum_buf = (float*)alloca(sizeof(float) * this->size);
+        float* debug_temp = (float*)alloca(sizeof(float) * this->size);
         for (int i = 0; i < this->size; i++) {
             spectrum_buf[i] = 0;
         }
-        float* debug_temp = (float*)alloca(sizeof(float) * this->size);
         spectrum_buf[0] = ARRAY_TO_DUMP[0] * SCALE;
         std::complex<float> phase = pow(std::complex<float>(0, 1), (float)frame_ctr);
         std::complex<float> bin_vec = phase;
@@ -168,13 +167,6 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
     frame_ctr = (frame_ctr + 1) % 4;
     diff_only = true;
 #else
-
-#if BIN_GAIN_DEBUG == 2
-    pffft_transform_ordered(this->pffft, spectrum_for_atten, clipping_delta, NULL, PFFFT_BACKWARD);
-    for (int i = 0; i < this->size; i++) {
-        clipping_delta[i] /= this->size * this->oversample;
-    }
-#endif
 
     // do overlap & add
     apply_window(clipping_delta, this->out_dist_frame.data(), true);
@@ -536,12 +528,6 @@ void shaping_clipper::clip_frame(const float* in_frame, float* out_dist_frame, c
         }
     }
 
-    if (out_dist_frame) {
-        for (int i = 0; i < this->size; i++) {
-            out_dist_frame[i] = clipping_delta[i];
-        }
-    }
-
     if (bin_gain_out) {
         for (int i = 0; i < this->size; i++) {
             windowed_frame[i] += clipping_delta[i];
@@ -555,6 +541,18 @@ void shaping_clipper::clip_frame(const float* in_frame, float* out_dist_frame, c
             } else {
                 bin_gain_out[i] = 1;
             }
+        }
+    }
+
+    if (out_dist_frame) {
+#if BIN_GAIN_DEBUG == 2
+        pffft_transform_ordered(this->pffft, spectrum_for_atten, clipping_delta, NULL, PFFFT_BACKWARD);
+        for (int i = 0; i < this->size; i++) {
+            clipping_delta[i] /= this->size * oversample;
+        }
+#endif
+        for (int i = 0; i < this->size; i++) {
+            out_dist_frame[i] = clipping_delta[i];
         }
     }
 }
