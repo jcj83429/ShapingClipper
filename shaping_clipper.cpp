@@ -124,233 +124,11 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
         this->out_dist_frame[i + this->size - this->overlap] = 0;
     }
 
-    float peak;
-    float* windowed_frame = (float*)alloca(sizeof(float) * this->size * this->oversample);
     float* clipping_delta = (float*)alloca(sizeof(float) * this->size * this->oversample);
-    float* spectrum_buf = (float*)alloca(sizeof(float) * this->size * this->oversample);
-    float* spectrum_for_atten = (float*)alloca(sizeof(float) * this->size);
-    float* mask_curve = (float*)alloca(sizeof(float) * (this->size / 2 + 1));
-    float* mask_curve2 = (float*)alloca(sizeof(float) * (this->size / 2 + 1));
-    float* bin_level_in = (float*)alloca(sizeof(float) * (this->size / 2 + 1));
+    float* current_frame_bin_atten = (float*)alloca(sizeof(float) * (this->size / 2 + 1));
 
-    apply_window(this->in_frame.data(), windowed_frame);
-
-    pffft_transform_ordered(this->pffft, windowed_frame, spectrum_buf, NULL, PFFFT_FORWARD);
-
-    calculate_mask_curve(spectrum_buf, mask_curve);
-
-    // borrow the spectrum_for_atten buffer.
-    for (int i = 0; i < this->num_psy_bins; i++) {
-        spectrum_for_atten[i * 2] = spectrum_buf[i * 2] * bin_gain[i];
-        spectrum_for_atten[i * 2 + 1] = spectrum_buf[i * 2 + 1] * bin_gain[i];
-    }
-    calculate_mask_curve(spectrum_for_atten, bin_level_in);
-
-    mask_curve2[0] = abs(spectrum_buf[0]) * (1.0 - bin_gain[0]);
-    for (int i = 1; i < this->num_psy_bins; i++) {
-        float real = spectrum_buf[i * 2];
-        float imag = spectrum_buf[i * 2 + 1];
-        // although the negative frequencies are omitted because they are redundant,
-        // the magnitude of the positive frequencies are not doubled.
-        // Multiply the magnitude by 2 to simulate adding up the + and - frequencies.
-        mask_curve2[i] = abs(std::complex<float>(real, imag)) * 2 * (1.0 - bin_gain[i]);
-    }
-
-    // high sample rates: clear mask_curve2 for ultrasonic frequencies
-    for (int i = this->num_psy_bins; i < this->size / 2 + 1; i++) {
-        mask_curve2[i] = 0;
-    }
-
-
-    int clipping_samples = this->size * this->oversample;
-    int window_stride = this->max_oversample / this->oversample;
-    PFFFT_Setup* clipping_pffft = this->pffft;
-    if (this->oversample > 1) {
-        clipping_pffft = this->pffft_oversampled;
-
-        // use IFFT to oversample the windowed frame
-        spectrum_buf[this->size] = spectrum_buf[1] / 2;
-        spectrum_buf[1] = 0;
-        for (int i = this->size + 1; i < this->size * this->oversample; i++) {
-            spectrum_buf[i] = 0;
-        }
-        // adjust scaling for oversampling
-        for (int i = 0; i <= this->size; i++) {
-            spectrum_buf[i] *= this->oversample;
-        }
-        for (int i = 0; i < this->size / 2 + 1; i++) {
-            mask_curve[i] *= this->oversample;
-            mask_curve2[i] *= this->oversample;
-        }
-        pffft_transform_ordered(this->pffft_oversampled, spectrum_buf, windowed_frame, NULL, PFFFT_BACKWARD);
-        for (int i = 0; i < clipping_samples; i++) {
-            windowed_frame[i] /= clipping_samples;
-        }
-    }
-
-    // apply bin gain through clipping delta
-    spectrum_buf[0] *= bin_gain[0] - 1.0;
-    spectrum_buf[1] = 0;
-    for (int i = 1; i < this->num_psy_bins; i++) {
-        spectrum_buf[i * 2] *= bin_gain[i] - 1.0;
-        spectrum_buf[i * 2 + 1] *= bin_gain[i] - 1.0;
-    }
-    // if oversampling is active, zero out bins above audible range. bin_gain doesn't apply there.
-    for (int i = this->num_psy_bins * 2; i < clipping_samples; i++) {
-        spectrum_buf[i] = 0;
-    }
-    memcpy(spectrum_for_atten, spectrum_buf, sizeof(float) * this->size);
-    pffft_transform_ordered(clipping_pffft, spectrum_buf, clipping_delta, NULL, PFFFT_BACKWARD);
-    for (int i = 0; i < clipping_samples; i++) {
-        clipping_delta[i] /= clipping_samples;
-    }
-
-    float orig_peak = 0;
-    for (int sample_idx = 0, window_idx = 0; sample_idx < clipping_samples; sample_idx++, window_idx += window_stride) {
-        orig_peak = std::max<float>(orig_peak, std::abs(windowed_frame[sample_idx] * inv_window[window_idx]));
-    }
-    orig_peak /= this->clip_level;
-    peak = orig_peak;
-
-    if (total_margin_shift) {
-        *total_margin_shift = 1.0;
-    }
-
-    // repeat clipping-filtering process a few times to control both the peaks and the spectrum
-    for (int i = 0; i < this->iterations; i++) {
-        // The last 1/3 of rounds have boosted delta to help reach the peak target faster
-        float delta_boost = 1.0;
-        if (i >= this->iterations - this->iterations / 3) {
-            // boosting the delta when largs peaks are still present is dangerous
-            if (peak < 2.0) {
-                delta_boost = 2.0;
-            }
-        }
-
-        for (int i = 0; i < this->size / 2 + 1; i++) {
-            mask_curve2[i] = std::max(mask_curve[i], mask_curve2[i]);
-        }
-
-        clip_to_window(windowed_frame, clipping_delta, delta_boost);
-
-        pffft_transform_ordered(clipping_pffft, clipping_delta, spectrum_buf, NULL, PFFFT_FORWARD);
-
-        if (this->oversample > 1) {
-            // Zero out all frequency bins above the base nyquist rate.
-            // limit_clip_spectrum doesn't handle these bins.
-            spectrum_buf[1] = 0;
-            for (int i = this->size + 1; i < this->size * this->oversample; i++) {
-                spectrum_buf[i] = 0;
-            }
-        }
-
-        limit_clip_spectrum(spectrum_buf, mask_curve2);
-
-        // For bins whose allowed clipping distortion is less than the effect of attenuation hold,
-        // forbid all clipping distortion by setting their values back to the attenuation hold values.
-        // For bins that are allowed to have more distortion, do distortion control on the clipping
-        // distortion on top of the attenuation. Distortion popping in and out can happen otherwise.
-
-        // All these special cases for bin 0 and N are ugly.
-        // I should allocate one more slot in the spectrum_buf and move bin N to the end.
-        // Also, normalize the scaling for bin 0 and N vs the rest so no x2 is needed for middle bins.
-        if (mask_curve[0] < mask_curve2[0]) {
-            spectrum_buf[0] = spectrum_for_atten[0];
-        } else {
-            float atten_real = spectrum_for_atten[0];
-            float atten_mag = abs(atten_real);
-            float remaining_mag = mask_curve2[0] - atten_mag;
-            float clip_real = spectrum_buf[0] - spectrum_for_atten[0];
-            float clip_mag = abs(clip_real);
-            if (clip_mag > remaining_mag) {
-                float scale = remaining_mag / clip_mag;
-                spectrum_buf[0] = atten_real + clip_real * scale;
-            }
-        }
-        for (int i = 1; i < this->num_psy_bins; i++) {
-            if (mask_curve[i] < mask_curve2[i]) {
-                spectrum_buf[i * 2] = spectrum_for_atten[i * 2];
-                spectrum_buf[i * 2 + 1] = spectrum_for_atten[i * 2 + 1];
-            } else {
-                // FIXME: Calculating the atten_mag every time is inefficient.
-                // We had it in mask_curve2 before the clipping-filtering loop.
-                float atten_real = spectrum_for_atten[i * 2];
-                float atten_imag = spectrum_for_atten[i * 2 + 1];
-                float atten_mag = abs(std::complex<float>(atten_real, atten_imag)) * 2;
-                float remaining_mag = mask_curve2[i] - atten_mag;
-                float clip_real = spectrum_buf[i * 2] - atten_real;
-                float clip_imag = spectrum_buf[i * 2 + 1] - atten_imag;
-                float clip_mag = abs(std::complex<float>(clip_real, clip_imag)) * 2;
-                if (clip_mag > remaining_mag) {
-                    float scale = remaining_mag / clip_mag;
-                    spectrum_buf[i * 2] = atten_real + clip_real * scale;
-                    spectrum_buf[i * 2 + 1] = atten_imag + clip_imag * scale;
-                }
-            }
-        }
-
-        pffft_transform_ordered(clipping_pffft, spectrum_buf, clipping_delta, NULL, PFFFT_BACKWARD);
-        // see pffft.h
-        for (int i = 0; i < clipping_samples; i++) {
-            clipping_delta[i] /= clipping_samples;
-        }
-
-        peak = 0;
-        for (int sample_idx = 0, window_idx = 0; sample_idx < clipping_samples; sample_idx++, window_idx += window_stride) {
-            peak = std::max<float>(peak, std::abs((windowed_frame[sample_idx] + clipping_delta[sample_idx]) * inv_window[window_idx]));
-        }
-        peak /= this->clip_level;
-
-        // Automatically adjust mask_curve as necessary to reach peak target
-        float mask_curve_shift = 1.122; // 1.122 is 1dB
-        if (orig_peak > 1.0 && peak > 1.0) {
-            float diff_achieved = orig_peak - peak;
-            if (i + 1 < this->iterations - this->iterations / 3 && diff_achieved > 0) {
-                float diff_needed = orig_peak - 1.0;
-                float diff_ratio = diff_needed / diff_achieved;
-                // If a good amount of peak reduction was already achieved,
-                // don't shift the mask_curve by the full peak value
-                // On the other hand, if only a little peak reduction was achieved,
-                // don't shift the mask_curve by the enormous diff_ratio.
-                diff_ratio = std::min<float>(diff_ratio, peak);
-                mask_curve_shift = std::max<float>(mask_curve_shift, diff_ratio);
-            } else {
-                // If the peak got higher than the input or we are in the last 1/3 rounds,
-                // go back to the heavy-handed peak heuristic.
-                mask_curve_shift = std::max<float>(mask_curve_shift, peak);
-            }
-        }
-
-        mask_curve_shift = 1.0 + (mask_curve_shift - 1.0) * this->adaptive_distortion_strength;
-
-        if (total_margin_shift && peak > 1.01 && i < this->iterations - 1) {
-            *total_margin_shift *= mask_curve_shift;
-        }
-
-        // Be less strict in the next iteration.
-        // This helps with peak control.
-        for (int i = 0; i < this->size / 2 + 1; i++) {
-            mask_curve[i] *= mask_curve_shift;
-        }
-    }
-
-    if (this->oversample > 1) {
-        // Downsample back to original rate.
-        // We already zeroed out all frequency bins above the base nyquist rate so we can simply drop samples here.
-        for (int i = 0; i < this->size; i++) {
-            clipping_delta[i] = clipping_delta[i * this->oversample];
-            windowed_frame[i] = windowed_frame[i * this->oversample];
-        }
-    }
-
-    // update bin gain
-    for (int i = 0; i < this->size; i++) {
-        windowed_frame[i] += clipping_delta[i];
-    }
-    pffft_transform_ordered(this->pffft, windowed_frame, spectrum_buf, NULL, PFFFT_FORWARD);
-    // reuse the spreading of the mask curve to calculate final bin level
-    calculate_mask_curve(spectrum_buf, mask_curve);
-    update_bin_gain(bin_level_in, mask_curve);
+    clip_frame(this->in_frame.data(), clipping_delta, this->bin_gain.data(), current_frame_bin_atten);
+    update_bin_gain(current_frame_bin_atten);
 
 #if BIN_GAIN_DEBUG == 1
 #define ARRAY_TO_DUMP bin_gain
@@ -529,6 +307,250 @@ void shaping_clipper::set_margin_curve(int points[][2], int num_points) {
     }
 }
 
+void shaping_clipper::clip_frame(const float* in_frame, float* out_dist_frame, const float* bin_gain_in, float* bin_gain_out) {
+    float peak;
+    float* windowed_frame = (float*)alloca(sizeof(float) * this->size * this->oversample);
+    float* clipping_delta = out_dist_frame ? out_dist_frame : (float*)alloca(sizeof(float) * this->size * this->oversample);
+    float* spectrum_buf = (float*)alloca(sizeof(float) * this->size * this->oversample);
+    float* spectrum_for_atten = (float*)alloca(sizeof(float) * this->size);
+    float* mask_curve = (float*)alloca(sizeof(float) * (this->size / 2 + 1));
+    float* mask_curve2 = (float*)alloca(sizeof(float) * (this->size / 2 + 1));
+    float* bin_level_in = (float*)alloca(sizeof(float) * (this->size / 2 + 1));
+
+    apply_window(in_frame, windowed_frame);
+
+    pffft_transform_ordered(this->pffft, windowed_frame, spectrum_buf, NULL, PFFFT_FORWARD);
+
+    calculate_mask_curve(spectrum_buf, mask_curve);
+
+    if (bin_gain_in) {
+        // borrow the spectrum_for_atten buffer.
+        for (int i = 0; i < this->num_psy_bins; i++) {
+            spectrum_for_atten[i * 2] = spectrum_buf[i * 2] * bin_gain_in[i];
+            spectrum_for_atten[i * 2 + 1] = spectrum_buf[i * 2 + 1] * bin_gain_in[i];
+        }
+        calculate_mask_curve(spectrum_for_atten, bin_level_in);
+
+        mask_curve2[0] = abs(spectrum_buf[0]) * (1.0 - bin_gain_in[0]);
+        for (int i = 1; i < this->num_psy_bins; i++) {
+            float real = spectrum_buf[i * 2];
+            float imag = spectrum_buf[i * 2 + 1];
+            // although the negative frequencies are omitted because they are redundant,
+            // the magnitude of the positive frequencies are not doubled.
+            // Multiply the magnitude by 2 to simulate adding up the + and - frequencies.
+            mask_curve2[i] = abs(std::complex<float>(real, imag)) * 2 * (1.0 - bin_gain_in[i]);
+        }
+    } else {
+        for (int i = 0; i < this->num_psy_bins; i++) {
+            // No bin_gain applied. bin_level_in is the same as mask_curve
+            bin_level_in[i] = mask_curve[i];
+            // and mask_curve2 is all 0
+            mask_curve2[i] = 0;
+        }
+    }
+
+    // high sample rates: clear mask_curve2 for ultrasonic frequencies
+    for (int i = this->num_psy_bins; i < this->size / 2 + 1; i++) {
+        mask_curve2[i] = 0;
+    }
+
+    int clipping_samples = this->size * this->oversample;
+    int window_stride = this->max_oversample / this->oversample;
+    PFFFT_Setup* clipping_pffft = this->pffft;
+    if (this->oversample > 1) {
+        clipping_pffft = this->pffft_oversampled;
+
+        // use IFFT to oversample the windowed frame
+        spectrum_buf[this->size] = spectrum_buf[1] / 2;
+        spectrum_buf[1] = 0;
+        for (int i = this->size + 1; i < this->size * this->oversample; i++) {
+            spectrum_buf[i] = 0;
+        }
+        // adjust scaling for oversampling
+        for (int i = 0; i <= this->size; i++) {
+            spectrum_buf[i] *= this->oversample;
+        }
+        for (int i = 0; i < this->size / 2 + 1; i++) {
+            mask_curve[i] *= this->oversample;
+            mask_curve2[i] *= this->oversample;
+        }
+        pffft_transform_ordered(this->pffft_oversampled, spectrum_buf, windowed_frame, NULL, PFFFT_BACKWARD);
+        for (int i = 0; i < clipping_samples; i++) {
+            windowed_frame[i] /= clipping_samples;
+        }
+    }
+
+    if (bin_gain_in) {
+        // apply bin gain through clipping delta
+        spectrum_buf[0] *= bin_gain_in[0] - 1.0;
+        spectrum_buf[1] = 0;
+        for (int i = 1; i < this->num_psy_bins; i++) {
+            spectrum_buf[i * 2] *= bin_gain_in[i] - 1.0;
+            spectrum_buf[i * 2 + 1] *= bin_gain_in[i] - 1.0;
+        }
+        // if oversampling is active, zero out bins above audible range. bin_gain doesn't apply there.
+        for (int i = this->num_psy_bins * 2; i < clipping_samples; i++) {
+            spectrum_buf[i] = 0;
+        }
+        memcpy(spectrum_for_atten, spectrum_buf, sizeof(float) * this->size);
+        pffft_transform_ordered(clipping_pffft, spectrum_buf, clipping_delta, NULL, PFFFT_BACKWARD);
+        for (int i = 0; i < clipping_samples; i++) {
+            clipping_delta[i] /= clipping_samples;
+        }
+    } else {
+        for (int i = 0; i < clipping_samples; i++) {
+            spectrum_for_atten[i] = 0;
+            clipping_delta[i] = 0;
+        }
+    }
+
+    float orig_peak = 0;
+    for (int sample_idx = 0, window_idx = 0; sample_idx < clipping_samples; sample_idx++, window_idx += window_stride) {
+        orig_peak = std::max<float>(orig_peak, std::abs(windowed_frame[sample_idx] * inv_window[window_idx]));
+    }
+    orig_peak /= this->clip_level;
+    peak = orig_peak;
+
+    // repeat clipping-filtering process a few times to control both the peaks and the spectrum
+    for (int i = 0; i < this->iterations; i++) {
+        // The last 1/3 of rounds have boosted delta to help reach the peak target faster
+        float delta_boost = 1.0;
+        if (i >= this->iterations - this->iterations / 3) {
+            // boosting the delta when largs peaks are still present is dangerous
+            if (peak < 2.0) {
+                delta_boost = 2.0;
+            }
+        }
+
+        for (int i = 0; i < this->size / 2 + 1; i++) {
+            mask_curve2[i] = std::max(mask_curve[i], mask_curve2[i]);
+        }
+
+        clip_to_window(windowed_frame, clipping_delta, delta_boost);
+
+        pffft_transform_ordered(clipping_pffft, clipping_delta, spectrum_buf, NULL, PFFFT_FORWARD);
+
+        if (this->oversample > 1) {
+            // Zero out all frequency bins above the base nyquist rate.
+            // limit_clip_spectrum doesn't handle these bins.
+            spectrum_buf[1] = 0;
+            for (int i = this->size + 1; i < this->size * this->oversample; i++) {
+                spectrum_buf[i] = 0;
+            }
+        }
+
+        limit_clip_spectrum(spectrum_buf, mask_curve2);
+
+        // For bins whose allowed clipping distortion is less than the effect of attenuation hold,
+        // forbid all clipping distortion by setting their values back to the attenuation hold values.
+        // For bins that are allowed to have more distortion, do distortion control on the clipping
+        // distortion on top of the attenuation. Distortion popping in and out can happen otherwise.
+
+        // All these special cases for bin 0 and N are ugly.
+        // I should allocate one more slot in the spectrum_buf and move bin N to the end.
+        // Also, normalize the scaling for bin 0 and N vs the rest so no x2 is needed for middle bins.
+        if (mask_curve[0] < mask_curve2[0]) {
+            spectrum_buf[0] = spectrum_for_atten[0];
+        } else {
+            float atten_real = spectrum_for_atten[0];
+            float atten_mag = abs(atten_real);
+            float remaining_mag = mask_curve2[0] - atten_mag;
+            float clip_real = spectrum_buf[0] - spectrum_for_atten[0];
+            float clip_mag = abs(clip_real);
+            if (clip_mag > remaining_mag) {
+                float scale = remaining_mag / clip_mag;
+                spectrum_buf[0] = atten_real + clip_real * scale;
+            }
+        }
+        for (int i = 1; i < this->num_psy_bins; i++) {
+            if (mask_curve[i] < mask_curve2[i]) {
+                spectrum_buf[i * 2] = spectrum_for_atten[i * 2];
+                spectrum_buf[i * 2 + 1] = spectrum_for_atten[i * 2 + 1];
+            } else {
+                // FIXME: Calculating the atten_mag every time is inefficient.
+                // We had it in mask_curve2 before the clipping-filtering loop.
+                float atten_real = spectrum_for_atten[i * 2];
+                float atten_imag = spectrum_for_atten[i * 2 + 1];
+                float atten_mag = abs(std::complex<float>(atten_real, atten_imag)) * 2;
+                float remaining_mag = mask_curve2[i] - atten_mag;
+                float clip_real = spectrum_buf[i * 2] - atten_real;
+                float clip_imag = spectrum_buf[i * 2 + 1] - atten_imag;
+                float clip_mag = abs(std::complex<float>(clip_real, clip_imag)) * 2;
+                if (clip_mag > remaining_mag) {
+                    float scale = remaining_mag / clip_mag;
+                    spectrum_buf[i * 2] = atten_real + clip_real * scale;
+                    spectrum_buf[i * 2 + 1] = atten_imag + clip_imag * scale;
+                }
+            }
+        }
+
+        pffft_transform_ordered(clipping_pffft, spectrum_buf, clipping_delta, NULL, PFFFT_BACKWARD);
+        // see pffft.h
+        for (int i = 0; i < clipping_samples; i++) {
+            clipping_delta[i] /= clipping_samples;
+        }
+
+        peak = 0;
+        for (int sample_idx = 0, window_idx = 0; sample_idx < clipping_samples; sample_idx++, window_idx += window_stride) {
+            peak = std::max<float>(peak, std::abs((windowed_frame[sample_idx] + clipping_delta[sample_idx]) * inv_window[window_idx]));
+        }
+        peak /= this->clip_level;
+
+        // Automatically adjust mask_curve as necessary to reach peak target
+        float mask_curve_shift = 1.122; // 1.122 is 1dB
+        if (orig_peak > 1.0 && peak > 1.0) {
+            float diff_achieved = orig_peak - peak;
+            if (i + 1 < this->iterations - this->iterations / 3 && diff_achieved > 0) {
+                float diff_needed = orig_peak - 1.0;
+                float diff_ratio = diff_needed / diff_achieved;
+                // If a good amount of peak reduction was already achieved,
+                // don't shift the mask_curve by the full peak value
+                // On the other hand, if only a little peak reduction was achieved,
+                // don't shift the mask_curve by the enormous diff_ratio.
+                diff_ratio = std::min<float>(diff_ratio, peak);
+                mask_curve_shift = std::max<float>(mask_curve_shift, diff_ratio);
+            } else {
+                // If the peak got higher than the input or we are in the last 1/3 rounds,
+                // go back to the heavy-handed peak heuristic.
+                mask_curve_shift = std::max<float>(mask_curve_shift, peak);
+            }
+        }
+
+        mask_curve_shift = 1.0 + (mask_curve_shift - 1.0) * this->adaptive_distortion_strength;
+
+        // Be less strict in the next iteration.
+        // This helps with peak control.
+        for (int i = 0; i < this->size / 2 + 1; i++) {
+            mask_curve[i] *= mask_curve_shift;
+        }
+    }
+
+    if (this->oversample > 1) {
+        // Downsample back to original rate.
+        // We already zeroed out all frequency bins above the base nyquist rate so we can simply drop samples here.
+        for (int i = 0; i < this->size; i++) {
+            clipping_delta[i] = clipping_delta[i * this->oversample];
+            windowed_frame[i] = windowed_frame[i * this->oversample];
+        }
+    }
+
+    if (bin_gain_out) {
+        for (int i = 0; i < this->size; i++) {
+            windowed_frame[i] += clipping_delta[i];
+        }
+        pffft_transform_ordered(this->pffft, windowed_frame, spectrum_buf, NULL, PFFFT_FORWARD);
+        // reuse the spreading of the mask curve to calculate final bin level
+        calculate_mask_curve(spectrum_buf, mask_curve);
+        for (int i = 0; i < this->num_psy_bins; i++) {
+            if (bin_level_in[i]) {
+                bin_gain_out[i] = mask_curve[i] / bin_level_in[i];
+            } else {
+                bin_gain_out[i] = 1;
+            }
+        }
+    }
+}
+
 void shaping_clipper::apply_window(const float* in_frame, float* out_frame, const bool add_to_out_frame) {
     const float* window = this->window.data();
     int total_samples = this->size;
@@ -641,13 +663,10 @@ void shaping_clipper::limit_clip_spectrum(float* clip_spectrum, const float* mas
     }
 }
 
-void shaping_clipper::update_bin_gain(const float* bin_level_in, const float* bin_level_out) {
+void shaping_clipper::update_bin_gain(const float* bin_level_ratio) {
     float *slope_limited_bin_gain = (float*)alloca(sizeof(float) * this->num_psy_bins);
     for (int i = 0; i < this->num_psy_bins; i++) {
-        float bin_atten = 1.0;
-        if (bin_level_in[i]) {
-            bin_atten = std::min(1.0f, bin_level_out[i] / bin_level_in[i]);
-        }
+        float bin_atten = std::min(1.0f, bin_level_ratio[i]);
         // Ignore small attenuations for release-hold decision, especially for already-attenuated bins.
         // If this is not done, then bins that are attenuated will tend to get attenuated more.
         // This can sometimes cause a downward spiral where everything keeps getting attenuated until the output is far below clipping threshold.

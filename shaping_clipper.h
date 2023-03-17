@@ -118,6 +118,20 @@ private:
     void generate_spread_table();
 
     /**
+     * The core clipping-filtering loop.
+     * in_frame: The input samples.
+     * out_dist_frame: The output samples.
+     *                 May be null or same as in_frame.
+     * bin_gain_in: The bin gain to apply to the input.
+     *              If null, then no bin_gain is applied (as if gain is 1 for every bin)
+     * bin_gain_out: The bin gain at the end of the clipping-filtering loop.
+     *               May be null or same as bin_gain_in.
+     *
+     * in_frame is not windowed. out_dist_frame is windowed once.
+     */
+    void clip_frame(const float* in_frame, float* out_dist_frame, const float* bin_gain_in, float* bin_gain_out);
+
+    /**
      *  Applies the window to the in_frame and store the result in the out_frame
      *  If add_to_out_frame is true, the results is added to the out_frame instead
      *  Always operates on non-oversampled samples.
@@ -147,9 +161,9 @@ private:
     void limit_clip_spectrum(float* clip_spectrum, const float* mask_curve);
 
     /**
-     *  Update the bin_gain based on the bin levels before and after clipping.
+     *  Update the bin_gain based on the bin level ratio before and after clipping.
      */
-    void update_bin_gain(const float* bin_level_in, const float* bin_level_out);
+    void update_bin_gain(const float* bin_level_ratio);
 };
 
 class shaping_clipper_stereo_coupler
