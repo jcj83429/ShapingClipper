@@ -41,10 +41,12 @@ shaping_clipper::shaping_clipper(int sample_rate, int fft_size, float clip_level
     this->out_dist_frame.resize(fft_size);
     this->margin_curve.resize(fft_size / 2 + 1);
     this->bin_gain.resize(fft_size / 2 + 1);
-    this->bin_hold.resize(fft_size / 2 + 1);
     for (int i = 0; i < fft_size / 2 + 1; i++) {
         this->bin_gain[i] = 1.0;
-        this->bin_hold[i] = 0;
+    }
+    m_lookahead_bin_atten.resize(m_max_lookahead_frames);
+    for (int i = 0; i < m_max_lookahead_frames; i++) {
+        m_lookahead_bin_atten[i].resize(this->num_psy_bins);
     }
     // normally I use __builtin_ctz for this but the intrinsic is different for
     // different compilers.
@@ -59,7 +61,7 @@ shaping_clipper::shaping_clipper(int sample_rate, int fft_size, float clip_level
     int num_points = 11;
     set_margin_curve(points, num_points);
     generate_spread_table();
-    set_compress_speed(300, 300);
+    set_compress_speed(200, 200);
 }
 
 shaping_clipper::~shaping_clipper() {
@@ -122,6 +124,15 @@ void shaping_clipper::feed(const float* in_samples, float* out_samples, bool dif
     for (int i = 0; i < this->overlap; i++) {
         this->in_frame[i + this->size + m_lookahead_frames * this->overlap - this->overlap] = in_samples[i];
         this->out_dist_frame[i + this->size - this->overlap] = 0;
+    }
+
+    // shift lookahead buffers
+    for (unsigned int i = 1; i < m_lookahead_frames; i++) {
+        m_lookahead_bin_atten[i].swap(m_lookahead_bin_atten[i - 1]);
+    }
+
+    if (m_lookahead_frames) {
+        clip_frame(this->in_frame.data() + this->overlap * m_lookahead_frames, NULL, NULL, m_lookahead_bin_atten[m_lookahead_frames - 1].data(), 8, 0.5, false);
     }
 
     float* clipping_delta = (float*)alloca(sizeof(float) * this->size);
@@ -673,29 +684,20 @@ void shaping_clipper::update_bin_gain(const float* bin_level_ratio) {
     float *slope_limited_bin_gain = (float*)alloca(sizeof(float) * this->num_psy_bins);
     for (int i = 0; i < this->num_psy_bins; i++) {
         float bin_atten = std::min(1.0f, bin_level_ratio[i]);
-        // Ignore small attenuations for release-hold decision, especially for already-attenuated bins.
-        // If this is not done, then bins that are attenuated will tend to get attenuated more.
-        // This can sometimes cause a downward spiral where everything keeps getting attenuated until the output is far below clipping threshold.
-        // The reason is probably that adjusting the bin gain causes the ends of the frame to exceed the window, causing additional clipping,
-        // Exactly when it happens seems to be random.
-        //
-        // This is still a hack, and it still doesn't work reliably.
-        // A proper formula needs to consider the absolute bin level difference and the clipping threshold,
-        // but it may not be needed if lookahead is implemented, as lookahead would replace bin_hold completely.
-
-        if (bin_atten < 1 - 0.01 / sqrt(bin_gain[i])) {
-            bin_hold[i] = 3;
+        float lookahead_target = 1.0f;
+        // start from 4 to ignore modulation by higher frequencies and only focus on modulation by deep bass.
+        for (int l = 4; l < m_lookahead_frames; l++) {
+            lookahead_target = std::min(lookahead_target, m_lookahead_bin_atten[l][i]);
         }
 
-        if (bin_hold[i]) {
-            bin_hold[i]--;
-        } else {
-            bin_atten *= release_speed;
-        }
-        bin_atten = std::max(bin_atten, attack_speed);
+        float new_bin_gain = bin_gain[i] * bin_atten;
 
-        bin_gain[i] *= bin_atten;
-        bin_gain[i] = std::min<float>(bin_gain[i], 1.0);
+        // use lookahead to control release
+        if (new_bin_gain < lookahead_target) {
+            new_bin_gain = std::min(lookahead_target, new_bin_gain * release_speed);
+        }
+
+        bin_gain[i] = std::max(bin_gain[i] * attack_speed, std::min<float>(1.0, new_bin_gain));
     }
 
     // Limit bin_gain slope to first order (6dB per octave). This is for a few reasons

@@ -92,7 +92,11 @@ private:
      */
     std::vector<float> in_frame, out_dist_frame, margin_curve, window, inv_window, spread_table, bin_gain;
 
-    std::vector<int> bin_hold;
+    /**
+     *  m_lookahead_bin_atten contains the bin attenuations collected from lookahead.
+     *  The 1D vectors inside are rotated as the buffered samples are shifed.
+     */
+    std::vector<std::vector<float>> m_lookahead_bin_atten;
 
     /**
      *  spreadtableIndex: for each bin, which entry in the spread table to use

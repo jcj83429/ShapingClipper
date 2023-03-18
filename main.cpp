@@ -6,6 +6,8 @@
 #include <cstring>
 #include "shaping_clipper.h"
 
+#define LOOKAHEAD_FRAMES 10
+
 struct WaveFmt{
 	uint8_t audio_format[2];
 	uint8_t num_channels[2];
@@ -161,11 +163,11 @@ int main(int argc, char* argv[])
 	shaping_clipper_stereo_coupler *stereo_coupler = NULL;
 	int fftSize = sampleRate <= 50000 ? 256 : sampleRate <= 100000 ? 512 : 1024;
 	for(int i = 0; i < channels; i++) {
-		clippers.push_back(new shaping_clipper(sampleRate, fftSize, fullScale*clipLevel, 4, 10));
+		clippers.push_back(new shaping_clipper(sampleRate, fftSize, fullScale*clipLevel, 4, LOOKAHEAD_FRAMES));
 		clippers[i]->set_adaptive_distortion_strength(adaptiveDistortion);
 		clippers[i]->set_iterations(iterations);
 		clippers[i]->set_oversample(1);
-		//clippers[i]->set_lookahead_frames(10);
+		clippers[i]->set_lookahead_frames(LOOKAHEAD_FRAMES);
 	}
 	if (channels == 2) {
 		stereo_coupler = new shaping_clipper_stereo_coupler(clippers[0], clippers[1]);
@@ -196,7 +198,7 @@ int main(int argc, char* argv[])
 		}
 		if (stereo_coupler) stereo_coupler->sync_bin_gain();
 
-		if(count < 3){ // due to FFT delay, first 3 output blocks are empty
+		if(count < 3 + LOOKAHEAD_FRAMES){ // due to FFT delay, first 3 output blocks are empty
 			count++;
 			continue;
 		}
@@ -223,7 +225,7 @@ int main(int argc, char* argv[])
 			inChannelBufs[c][i] = 0;
 		}
 	}
-	for(int i = 0; i < 3; i++){
+	for(int i = 0; i < 3 + LOOKAHEAD_FRAMES; i++){
 		for(int c = 0; c < channels; c++){
 			clippers[c]->feed(inChannelBufs[c], outChannelBufs[c]);
 		}
