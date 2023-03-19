@@ -682,19 +682,30 @@ void shaping_clipper::limit_clip_spectrum(float* clip_spectrum, const float* mas
 
 void shaping_clipper::update_bin_gain(const float* bin_level_ratio) {
     float *slope_limited_bin_gain = (float*)alloca(sizeof(float) * this->num_psy_bins);
+    float inv_attack_speed = 1.0 / attack_speed;
     for (int i = 0; i < this->num_psy_bins; i++) {
         float bin_atten = std::min(1.0f, bin_level_ratio[i]);
-        float lookahead_target = 1.0f;
+
+        float lookahead_release_target = 1.0f;
         // start from 4 to ignore modulation by higher frequencies and only focus on modulation by deep bass.
         for (int l = 4; l < m_lookahead_frames; l++) {
-            lookahead_target = std::min(lookahead_target, m_lookahead_bin_atten[l][i]);
+            lookahead_release_target = std::min(lookahead_release_target, m_lookahead_bin_atten[l][i]);
         }
 
-        float new_bin_gain = bin_gain[i] * bin_atten;
+        // Attack is different. We need to calculate the "present value" of each lookahead bin atten.
+        float lookahead_attack_target = 1.0f;
+        for (int l = m_lookahead_frames - 1; l >= 0; l--) {
+            lookahead_attack_target = std::min(lookahead_attack_target, m_lookahead_bin_atten[l][i]);
+            lookahead_attack_target *= inv_attack_speed;
+        }
+        // multiply the attack target by 2 to allow 6dB of overshoot.
+        lookahead_attack_target *= 2;
+
+        float new_bin_gain = std::min(bin_gain[i] * bin_atten, lookahead_attack_target);
 
         // use lookahead to control release
-        if (new_bin_gain < lookahead_target) {
-            new_bin_gain = std::min(lookahead_target, new_bin_gain * release_speed);
+        if (new_bin_gain < lookahead_release_target) {
+            new_bin_gain = std::min(lookahead_release_target, new_bin_gain * release_speed);
         }
 
         bin_gain[i] = std::max(bin_gain[i] * attack_speed, std::min<float>(1.0, new_bin_gain));
