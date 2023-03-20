@@ -317,6 +317,7 @@ void shaping_clipper::clip_frame(const float* in_frame, float* out_dist_frame, c
     float* windowed_frame = (float*)alloca(sizeof(float) * this->size * oversample);
     float* clipping_delta = (float*)alloca(sizeof(float) * this->size * oversample);
     float* spectrum_buf = (float*)alloca(sizeof(float) * this->size * oversample);
+    float* original_spectrum = (float*)alloca(sizeof(float) * this->size);
     float* spectrum_for_atten = (float*)alloca(sizeof(float) * this->size);
     float* mask_curve = (float*)alloca(sizeof(float) * (this->size / 2 + 1));
     float* mask_curve2 = (float*)alloca(sizeof(float) * (this->size / 2 + 1));
@@ -325,6 +326,10 @@ void shaping_clipper::clip_frame(const float* in_frame, float* out_dist_frame, c
     apply_window(in_frame, windowed_frame);
 
     pffft_transform_ordered(this->pffft, windowed_frame, spectrum_buf, NULL, PFFFT_FORWARD);
+
+    for (int i = 0; i < this->size; i++) {
+        original_spectrum[i] = spectrum_buf[i] * oversample;
+    }
 
     calculate_mask_curve(spectrum_buf, mask_curve);
 
@@ -474,18 +479,32 @@ void shaping_clipper::clip_frame(const float* in_frame, float* out_dist_frame, c
             } else {
                 // FIXME: Calculating the atten_mag every time is inefficient.
                 // We had it in mask_curve2 before the clipping-filtering loop.
-                float atten_real = spectrum_for_atten[i * 2];
-                float atten_imag = spectrum_for_atten[i * 2 + 1];
-                float atten_mag = abs(std::complex<float>(atten_real, atten_imag)) * 2;
+                std::complex<float> atten(spectrum_for_atten[i * 2], spectrum_for_atten[i * 2 + 1]);
+                std::complex<float> clip = std::complex<float>(spectrum_buf[i * 2], spectrum_buf[i * 2 + 1]) - atten;
+                std::complex<float> orig(original_spectrum[i * 2], original_spectrum[i * 2 + 1]);
+                // multiply by 2 to match calculate_mask_curve
+                float atten_mag = abs(atten) * 2;
                 float remaining_mag = mask_curve2[i] - atten_mag;
-                float clip_real = spectrum_buf[i * 2] - atten_real;
-                float clip_imag = spectrum_buf[i * 2 + 1] - atten_imag;
-                float clip_mag = abs(std::complex<float>(clip_real, clip_imag)) * 2;
+                float clip_mag = abs(clip) * 2;
+                float scale = 1;
                 if (clip_mag > remaining_mag) {
-                    float scale = remaining_mag / clip_mag;
-                    spectrum_buf[i * 2] = atten_real + clip_real * scale;
-                    spectrum_buf[i * 2 + 1] = atten_imag + clip_imag * scale;
+                    scale = remaining_mag / clip_mag;
                 }
+
+                if (bin_gain_in) {
+                    // When bin_gain is active, apply additional protection against additive distortion.
+                    // HACK-ish: reuse the bin_level_in, which is the mask curve calculated on the attenuated input.
+                    float max_additive_mag = bin_level_in[i] * 2; // TODO: Make this number a parameter.
+                    float unclipped_mag = abs(orig + atten) * 2;
+                    float clipped_mag = abs(orig + atten + clip) * 2;
+                    if (clipped_mag > unclipped_mag + max_additive_mag) {
+                        scale = std::min(scale, max_additive_mag / (clipped_mag - unclipped_mag));
+                    }
+                }
+
+                std::complex<float> new_value = atten + clip * scale;
+                spectrum_buf[i * 2] = new_value.real();
+                spectrum_buf[i * 2 + 1] = new_value.imag();
             }
         }
 
