@@ -59,7 +59,7 @@ public:
 
     void set_oversample(int oversample);
 
-    void set_compress_speed(float attack_db_per_sec, float release_db_per_sec);
+    void set_compress_speed(float attack_db_per_sec_per_db, float release_db_per_sec_per_db);
 
     void set_lookahead_frames(unsigned int lookahead_frames);
 

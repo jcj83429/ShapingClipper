@@ -61,7 +61,7 @@ shaping_clipper::shaping_clipper(int sample_rate, int fft_size, float clip_level
     int num_points = 11;
     set_margin_curve(points, num_points);
     generate_spread_table();
-    set_compress_speed(200, 200);
+    set_compress_speed(75, 75);
 }
 
 shaping_clipper::~shaping_clipper() {
@@ -102,11 +102,9 @@ void shaping_clipper::set_oversample(int oversample) {
     this->oversample = oversample;
 }
 
-void shaping_clipper::set_compress_speed(float attack_db_per_sec, float release_db_per_sec) {
-    float attack_db_per_frame = attack_db_per_sec * this->overlap / this->sample_rate;
-    attack_speed = pow(10, -attack_db_per_frame / 20);
-    float release_db_per_frame = release_db_per_sec * this->overlap / this->sample_rate;
-    release_speed = pow(10, release_db_per_frame / 20);
+void shaping_clipper::set_compress_speed(float attack_db_per_sec_per_db, float release_db_per_sec_per_db) {
+    attack_speed = attack_db_per_sec_per_db * this->overlap / this->sample_rate;
+    release_speed = release_db_per_sec_per_db * this->overlap / this->sample_rate;
 }
 
 void shaping_clipper::set_lookahead_frames(unsigned int lookahead_frames) {
@@ -701,7 +699,6 @@ void shaping_clipper::limit_clip_spectrum(float* clip_spectrum, const float* mas
 
 void shaping_clipper::update_bin_gain(const float* bin_level_ratio) {
     float *slope_limited_bin_gain = (float*)alloca(sizeof(float) * this->num_psy_bins);
-    float inv_attack_speed = 1.0 / attack_speed;
     for (int i = 0; i < this->num_psy_bins; i++) {
         float bin_atten = std::min(1.0f, bin_level_ratio[i]);
 
@@ -713,21 +710,35 @@ void shaping_clipper::update_bin_gain(const float* bin_level_ratio) {
 
         // Attack is different. We need to calculate the "present value" of each lookahead bin atten.
         float lookahead_attack_target = 1.0f;
-        for (int l = m_lookahead_frames - 1; l >= 0; l--) {
-            lookahead_attack_target = std::min(lookahead_attack_target, m_lookahead_bin_atten[l][i]);
-            lookahead_attack_target *= inv_attack_speed;
+        // Lookahead attack is diabled because it's doing too much damage.
+        /*
+        const float lookahead_attack_overshoot = 2;
+        for (unsigned int l = 0; l < std::min(4u, m_lookahead_frames); l++) {
+            // Calculate what bin_gain we need to have now to reach the desired overshoot "l" frames in the future.
+            float present_value = m_lookahead_bin_atten[l][i] * pow(lookahead_attack_overshoot, pow(1.0 / (1.0 - attack_speed), l));
+            if (present_value < bin_gain[i]) {
+                lookahead_attack_target = std::min(lookahead_attack_target, m_lookahead_bin_atten[l][i]);
+            }
         }
-        // multiply the attack target by 2 to allow 6dB of overshoot.
-        lookahead_attack_target *= 2;
+        */
 
-        float new_bin_gain = std::min(bin_gain[i] * bin_atten, lookahead_attack_target);
-
-        // use lookahead to control release
-        if (new_bin_gain < lookahead_release_target) {
-            new_bin_gain = std::min(lookahead_release_target, new_bin_gain * release_speed);
+        float bin_attack_target = std::min(bin_gain[i] * bin_atten, lookahead_attack_target);
+        if (bin_attack_target < bin_gain[i]) {
+            if (bin_attack_target < bin_gain[i] * 0.7f) {
+                bin_gain[i] *= pow(bin_attack_target / bin_gain[i], attack_speed);
+            } else {
+                // If the target gain reduction is less than 3dB away,
+                // calculate the attack speed as if it's 3dB away 
+                // to make the end of the attack linear rather than exponential.
+                // Otherwise the target will never be reached.
+                bin_gain[i] *= std::max(bin_attack_target / bin_gain[i], pow(0.7f, attack_speed));
+            }
         }
 
-        bin_gain[i] = std::max(bin_gain[i] * attack_speed, std::min<float>(1.0, new_bin_gain));
+        if (bin_gain[i] < lookahead_release_target) {
+            bin_gain[i] = bin_gain[i] * pow(lookahead_release_target / bin_gain[i], release_speed);
+        }
+        bin_gain[i] = std::min(1.0f, bin_gain[i]);
     }
 
     // Limit bin_gain slope to first order (6dB per octave). This is for a few reasons
