@@ -6,7 +6,7 @@
 #include <cstring>
 #include "shaping_clipper.h"
 
-#define LOOKAHEAD_FRAMES 10
+#define LOOKAHEAD_FRAMES 12
 
 struct WaveFmt{
 	uint8_t audio_format[2];
